@@ -207,17 +207,22 @@ object JsonIteratee {
    * Error iteratee.  Differs from Iteratees Error iteratee in that initially this one is in the cont state, so that
    * it can get the remaining input to pass back in the error.  This makes it more useful for composition.
    */
-  def error[T](msg: String) = new Iteratee[Array[Char], T] {
-    def fold[B](folder: (Step[Array[Char], T]) => Future[B]) = {
+  def error[A](msg: String) = new Iteratee[Array[Char], A] {
+    def fold[B](folder: (Step[Array[Char], A]) => Future[B]) = {
       folder(Step.Cont { input =>
         Error(msg, input)
       })
     }
   }
 
+  /**
+   * Done iteratee, typed with Array[Char] to avoid needing to type it ourselves
+   */
+  def done[A](a: A) = Done[Array[Char], A](a)
+
   def skipWhitespace = dropWhile(_.isWhitespace)
 
-  def expect(value: Char) = peekOne.flatMap(_ match {
+  def expect(value: Char) = peekOne.flatMap({
     case Some(c) if c == value => Done(Unit)
     case Some(c) => error("Expected '" + value + "' but got '" + c + "'")
     case None => error("Premature end of input, expected '" + value + "'")
@@ -225,44 +230,40 @@ object JsonIteratee {
 
   def drop(n: Int): Iteratee[Array[Char], Unit] = new Iteratee[Array[Char], Unit] {
     def fold[B](folder: (Step[Array[Char], Unit]) => Future[B]) = {
-      folder(Step.Cont { input =>
-        input match {
-          case EOF => Done(Unit, input)
-          case Empty => this
-          case El(data) => {
-            val remaining = n - data.length
-            if (remaining == 0) {
-              Done(Unit, Empty)
-            } else if (remaining < 0) {
-              Done(Unit, El(data.drop(n)))
-            } else {
-              drop(remaining)
-            }
+      folder(Step.Cont {
+        case in @ EOF => Done(Unit, in)
+        case Empty => this
+        case El(data) => {
+          val remaining = n - data.length
+          if (remaining == 0) {
+            Done(Unit, Empty)
+          } else if (remaining < 0) {
+            Done(Unit, El(data.drop(n)))
+          } else {
+            drop(remaining)
           }
         }
       })
     }
   }
 
-  def takeOneOf(values: Char*) = peekOne.flatMap(_ match {
-    case Some(c) if values.contains(c) => Done(c)
+  def takeOneOf(values: Char*) = peekOne.flatMap({
+    case Some(c) if values.contains(c) => done(c)
     case Some(c) => error("Expected one of " + values.mkString("'", "', '", "'") + " but got '" + c + "'")
     case None => error("Premature end of input, expected one of " + values.mkString("'", "', '", "'"))
   }).flatMap(c => drop(1).map(_ => c))
 
   def dropWhile(p: Char => Boolean): Iteratee[Array[Char], Unit] = new Iteratee[Array[Char], Unit] {
     def fold[B](folder: (Step[Array[Char], Unit]) => Future[B]) = {
-      folder(Step.Cont { input =>
-        input match {
-          case EOF => Done(Unit, input)
-          case Empty => this
-          case El(data) => {
-            val dropped = data.dropWhile(p)
-            if (dropped.length == 0) {
-              this
-            } else {
-              Done(Unit, El(dropped))
-            }
+      folder(Step.Cont {
+        case in @ EOF => Done(Unit, in)
+        case Empty => this
+        case El(data) => {
+          val dropped = data.dropWhile(p)
+          if (dropped.length == 0) {
+            this
+          } else {
+            Done(Unit, El(dropped))
           }
         }
       })
@@ -271,19 +272,17 @@ object JsonIteratee {
 
   def peekWhile(p: Char => Boolean, sb: StringBuilder = new StringBuilder): Iteratee[Array[Char], String] = new Iteratee[Array[Char], String] {
     def fold[B](folder: (Step[Array[Char], String]) => Future[B]) = {
-      folder(Step.Cont { input =>
-        input match {
-          case EOF => Done(sb.toString(), input)
-          case Empty => this
-          case El(data) => {
-            val taken = data.takeWhile(p)
-            if (taken.length == data.length) {
-              sb.appendAll(taken)
-              peekWhile(p, sb)
-            } else {
-              val old = sb.clone()
-              Done(sb.appendAll(taken).toString(), El(old.appendAll(data).toArray))
-            }
+      folder(Step.Cont {
+        case in @ EOF => Done(sb.toString(), in)
+        case Empty => this
+        case El(data) => {
+          val taken = data.takeWhile(p)
+          if (taken.length == data.length) {
+            sb.appendAll(taken)
+            peekWhile(p, sb)
+          } else {
+            val old = sb.clone()
+            Done(sb.appendAll(taken).toString(), El(old.appendAll(data).toArray))
           }
         }
       })
@@ -292,25 +291,21 @@ object JsonIteratee {
 
   def takeOne(expected: => String) = new Iteratee[Array[Char], Char] {
     def fold[B](folder: (Step[Array[Char], Char]) => Future[B]) = {
-      folder(Step.Cont { input =>
-        input match {
-          case EOF => Error("Expected " + expected + " but got EOF", input)
-          case Empty => this
-          case El(data) => data.headOption.map(c => Done(c, El(data.drop(1)))).getOrElse(this)
-        }
+      folder(Step.Cont {
+        case in @ EOF => Error("Expected " + expected + " but got EOF", in)
+        case Empty => this
+        case El(data) => data.headOption.map(c => Done(c, El(data.drop(1)))).getOrElse(this)
       })
     }
   }
 
   def peekOne = new Iteratee[Array[Char], Option[Char]] {
     def fold[B](folder: (Step[Array[Char], Option[Char]]) => Future[B]) = {
-      folder(Step.Cont { input =>
-        input match {
-          case EOF => Done(None, input)
-          case Empty => this
-          case El(data) => {
-            data.headOption.map(c => Done(Some(c), input)).getOrElse(this)
-          }
+      folder(Step.Cont {
+        case in @ EOF => Done(None, in)
+        case Empty => this
+        case in @ El(data) => {
+          data.headOption.map(c => Done(Some(c), in)).getOrElse(this)
         }
       })
     }
@@ -328,30 +323,24 @@ object JsonIteratee {
       in match {
         case EOF => Error("Unexpected EOF in object", in)
         case Empty => Cont(step(inner))
-        case El(data) =>
-          val fed = Iteratee.flatten(Enumerator.enumerate(Seq(data))(for {
-            _ <- skipWhitespace
-            keyValue <- jsonKeyValue(valueHandler)
-          } yield {
-            Iteratee.flatten(Enumerator.enumerate(Seq(keyValue)) |>> inner)
-          }))
-
-          val next = for {
-            iter <- fed
-            _ <- skipWhitespace
-            ch <- takeOneOf('}', ',')
-          } yield {
-            (ch, iter)
-          }
-
-          next.flatMap {
-            case (',', i) => Iteratee.flatten(i.pureFold(_ match {
-              case Step.Done(a, e) => Done(Done(a, e), Empty)
-              case Step.Cont(k) => Cont(in => step(Cont(k))(in))
-              case Step.Error(err, e) => Error(err, EOF)
+        case El(data) => for {
+          fed <- Iteratee.flatten(Enumerator.enumerate(Seq(data))(for {
+              _ <- skipWhitespace
+              keyValue <- jsonKeyValue(valueHandler)
+            } yield {
+              Iteratee.flatten(Enumerator.enumerate(Seq(keyValue)) |>> inner)
             }))
-            case ('}', i) => Done(Iteratee.flatten(i.feed(EOF)))
+          _ <- skipWhitespace
+          ch <- takeOneOf('}', ',')
+          nextStep <- ch match {
+            case ',' => Iteratee.flatten(fed.pureFold(_ match {
+              case Step.Done(a, e) => done(Done(a, e))
+              case Step.Cont(k) => Cont((in:Input[Array[Char]]) => step(Cont(k))(in))
+              case Step.Error(err, e) => Error[Array[Char]](err, EOF)
+            }))
+            case '}' => done(Iteratee.flatten(fed.feed(EOF)))
           }
+        } yield nextStep
       }
     }
 
@@ -368,30 +357,24 @@ object JsonIteratee {
       in match {
         case EOF => Error("Unexpected EOF in array", in)
         case Empty => Cont(step(inner))
-        case in @ El(data) =>
-          val fed = Iteratee.flatten(Enumerator.enumerate(Seq(data))(for {
-            _ <- skipWhitespace
-            value <- valueHandler(index)
-          } yield {
-            Iteratee.flatten(Enumerator.enumerate(Seq(value)) |>> inner)
-          }))
-
-          val next = for {
-            iter <- fed
-            _ <- skipWhitespace
-            ch <- takeOneOf(']', ',')
-          } yield {
-            (ch, iter)
-          }
-
-          next.flatMap {
-            case (',', i) => Iteratee.flatten(i.pureFold(_ match {
-              case Step.Done(a, e) => Done(Done(a, e), Empty)
-              case Step.Cont(k) => Cont(in => step(Cont(k), index + 1)(in))
-              case Step.Error(err, e) => Error(err, EOF)
+        case in @ El(data) => for {
+          fed <- Iteratee.flatten(Enumerator.enumerate(Seq(data))(for {
+              _ <- skipWhitespace
+              value <- valueHandler(index)
+            } yield {
+              Iteratee.flatten(Enumerator.enumerate(Seq(value)) |>> inner)
             }))
-            case (']', i) => Done(Iteratee.flatten(i.feed(EOF)))
+          _ <- skipWhitespace
+          ch <- takeOneOf(']', ',')
+          nextStep <- ch match {
+            case ',' => Iteratee.flatten(fed.pureFold(_ match {
+              case Step.Done(a, e) => done(Done(a, e))
+              case Step.Cont(k) => Cont((in: Input[Array[Char]]) => step(Cont(k), index + 1)(in))
+              case Step.Error(err, e) => Error[Array[Char]](err, EOF)
+            }))
+            case ']' => done(Iteratee.flatten(fed.feed(EOF)))
           }
+        } yield nextStep
       }
     }
 
@@ -413,26 +396,37 @@ object JsonIteratee {
   def jsonKeyValuePair: String => Iteratee[Array[Char], (String, JsValue)] = key => jsonValue.map(value => (key, value))
 
   def jsonObject[A, V](keyValuesHandler: Iteratee[V, A] = jsonObjectCreator,
-                       valueHandler: String => Iteratee[Array[Char], V] = jsonKeyValuePair) =
-    expect('{').flatMap(_ => skipWhitespace).flatMap(_ => peekOne).flatMap(_ match {
+                       valueHandler: String => Iteratee[Array[Char], V] = jsonKeyValuePair) = for {
+    _ <- expect('{')
+    - <- skipWhitespace
+    ch <- peekOne
+    keyValues <- ch match {
       case Some('}') => drop(1).flatMap(_ => Iteratee.flatten(keyValuesHandler.run.map { a: A =>
         Done[Array[Char], A](a)
       }))
       case _ => jsonKeyValues(valueHandler) &>> keyValuesHandler
-    })
+    }
+  } yield keyValues
 
   def jsonValueForEach: Int => Iteratee[Array[Char], JsValue] = index => jsonValue
 
   def jsonArray[A, V](valuesHandler: Iteratee[V, A] = jsonArrayCreator,
-                      valueHandler: Int => Iteratee[Array[Char], V] = jsonValueForEach) =
-    expect('[').flatMap(_ => skipWhitespace).flatMap(_ => peekOne).flatMap(_ match {
-      case Some(']') => drop(1).flatMap(_ => Iteratee.flatten(valuesHandler.run.map { a: A =>
-        Done[Array[Char], A](a)
-      }))
+                      valueHandler: Int => Iteratee[Array[Char], V] = jsonValueForEach) = for {
+    _ <- expect('[')
+    _ <- skipWhitespace
+    ch <- peekOne
+    values <- ch match {
+      case Some(']') => for {
+        _ <- drop(1)
+        h <- Iteratee.flatten(valuesHandler.run.map { a: A =>
+            Done[Array[Char], A](a)
+          })
+      } yield h
       case _ => jsonArrayValues(valueHandler) &>> valuesHandler
-    })
+    }
+  } yield values
 
-  def jsonValue: Iteratee[Array[Char], JsValue] = peekOne.flatMap(_ match {
+  def jsonValue: Iteratee[Array[Char], JsValue] = peekOne.flatMap({
     case Some('"') => jsonString().map(s => new JsString(s))
     case Some('{') => jsonObject()
     case Some('[') => jsonArray()
@@ -443,81 +437,87 @@ object JsonIteratee {
     case None => error("Expected JSON value, but found EOF")
   })
 
-  def jsonNumber = peekWhile(ch => ch.isDigit || ch == '+' || ch == '-' || ch == '.' || ch == 'e' || ch == 'E').flatMap({ n =>
-    try {
-      Done(new JsNumber(BigDecimal(n)))
+  def jsonNumber = for {
+    number <- peekWhile(ch => ch.isDigit || ch == '+' || ch == '-' || ch == '.' || ch == 'e' || ch == 'E')
+    jsNumber <- try {
+      done(new JsNumber(BigDecimal(number)))
     } catch {
-      case e: NumberFormatException => error("Unparsable number: " + n)
+      case e: NumberFormatException => error("Unparsable number: " + number)
     }
-  }).flatMap(n => dropWhile(ch => ch.isDigit || ch == '+' || ch == '-' || ch == '.' || ch == 'e' || ch == 'E').map(_ => n))
+    _ <- dropWhile(ch => ch.isDigit || ch == '+' || ch == '-' || ch == '.' || ch == 'e' || ch == 'E')
+  } yield jsNumber
 
-  def jsonBoolean = peekWhile(ch => ch >= 'a' && ch <= 'z').flatMap(_ match {
-    case t if t == "true" => Done(JsBoolean(true))
-    case f if f == "false" => Done(JsBoolean(false))
-    case o => error("Unknown identifier: " + o)
-  }).flatMap(i => dropWhile(ch => ch >= 'a' && ch <= 'z').map(_ => i))
+  def jsonBoolean = for {
+    boolean <- peekWhile(ch => ch >= 'a' && ch <= 'z')
+    jsBoolean <- boolean match {
+      case t if t == "true" => done(JsBoolean(true))
+      case f if f == "false" => done(JsBoolean(false))
+      case o => error("Unknown identifier: " + o)
+    }
+    _ <- dropWhile(ch => ch >= 'a' && ch <= 'z')
+  } yield jsBoolean
 
-  def jsonNull = peekWhile(ch => ch >= 'a' && ch <= 'z').flatMap(_ match {
-    case n if n == "null" => Done(JsNull)
-    case o => error("Unknown identifier: " + o)
-  }).flatMap(i => dropWhile(ch => ch >= 'a' && ch <= 'z').map(_ => i))
+  def jsonNull = for {
+    nullStr <- peekWhile(ch => ch >= 'a' && ch <= 'z')
+    jsNull <- nullStr match {
+      case n if n == "null" => done(JsNull)
+      case o => error("Unknown identifier: " + o)
+    }
+    _ <- dropWhile(ch => ch >= 'a' && ch <= 'z')
+  } yield jsNull
 
   def jsonString(sb: StringBuilder = new StringBuilder, escaped: Option[StringBuilder] = None): Iteratee[Array[Char], String] =
     expect('"').flatMap(_ => new Iteratee[Array[Char], String] {
       def fold[B](folder: (Step[Array[Char], String]) => Future[B]) = {
-        folder(Step.Cont { input =>
-          input match {
-            case EOF => Error("Unexpected end of input in the middle of a String", input)
-            case Empty => this
-            case El(data) => {
-              // Represents the state of the fold.  We have the result StringBuilder, possibly a remaining StringBuilder
-              // if we've encountered an error, an escaped StringBuilder if we are currently reading an escape sequence,
-              // and possibly an error message.  Because this is a mutable structure with the StringBuilders, we, for
-              // the normal case of growing the result or remaining buffers, do not need to create a new state, but can
-              // just append to the buffers.
-              case class State(result: StringBuilder,
-                               remaining: Option[StringBuilder],
-                               escaped: Option[StringBuilder],
-                               error: Option[String])
+        folder(Step.Cont {
+          case in @ EOF => Error("Unexpected end of input in the middle of a String", in)
+          case Empty => this
+          case El(data) => {
+            // Represents the state of the fold.  We have the result StringBuilder, possibly a remaining StringBuilder
+            // if we've encountered an error, an escaped StringBuilder if we are currently reading an escape sequence,
+            // and possibly an error message.  Because this is a mutable structure with the StringBuilders, we, for
+            // the normal case of growing the result or remaining buffers, do not need to create a new state, but can
+            // just append to the buffers.
+            case class State(result: StringBuilder,
+                             remaining: Option[StringBuilder],
+                             escaped: Option[StringBuilder],
+                             error: Option[String])
 
-              // Fold it
-              val state = data.foldLeft(new State(sb, None, escaped, None)) { (state, c) =>
-                (state, c) match {
-                  // We've finished, and are collecting remaining characters
-                  case (State(_, Some(remaining), _, _), ch) => {
-                    remaining.append(ch)
-                    state
-                  }
-                  // We're in the middle of an escape sequence
-                  case (State(result, _, Some(esc), _), ch) => {
-                    unescape(esc.append(ch)).fold(
-                      err => new State(result, Some(new StringBuilder().append("\\").append(esc)), None, Some(err)),
-                      _.map(c => new State(result.append(c), None, None, None)).getOrElse(state)
-                    )
-                  }
-                  // Control character, that's an error
-                  case (State(result, _, _, _), control) if control >= 0 && control < 32 => {
-                    new State(result, Some(new StringBuilder), None,
-                      Some("Illegal control character found in JSON String: 0x" + Integer.toString(control, 16)))
-                  }
-                  // We've encountered the start of an escape sequence
-                  case (State(result, _, _, _), '\\') => new State(result, None, Some(new StringBuilder), None)
+            // Fold it
+            val state = data.foldLeft(new State(sb, None, escaped, None)) {
+              // We've finished, and are collecting remaining characters
+              case (state @ State(_, Some(remaining), _, _), ch) => {
+                remaining.append(ch)
+                state
+              }
+              // We're in the middle of an escape sequence
+              case (state @ State(result, _, Some(esc), _), ch) => {
+                unescape(esc.append(ch)).fold(
+                  err => new State(result, Some(new StringBuilder().append("\\").append(esc)), None, Some(err)),
+                  _.map(c => new State(result.append(c), None, None, None)).getOrElse(state)
+                )
+              }
+              // Control character, that's an error
+              case (State(result, _, _, _), control) if control >= 0 && control < 32 => {
+                new State(result, Some(new StringBuilder), None,
+                  Some("Illegal control character found in JSON String: 0x" + Integer.toString(control, 16)))
+              }
+              // We've encountered the start of an escape sequence
+              case (State(result, _, _, _), '\\') => new State(result, None, Some(new StringBuilder), None)
 
-                  // We've encountered the end of the String, and should start collecting remaining characters
-                  case (State(result, _, _, _), '"') => new State(result, Some(new StringBuilder), None, None)
-                  // An ordinary character to append to the result
-                  case (State(result, _, _, _), ch) => {
-                    result.append(ch)
-                    state
-                  }
-                }
+              // We've encountered the end of the String, and should start collecting remaining characters
+              case (State(result, _, _, _), '"') => new State(result, Some(new StringBuilder), None, None)
+              // An ordinary character to append to the result
+              case (state @ State(result, _, _, _), ch) => {
+                result.append(ch)
+                state
               }
-              // Convert the state to an Iteratee
-              state match {
-                case State(_, Some(remaining), _, Some(err)) => Error(err, El(remaining.toArray))
-                case State(result, Some(remaining), _, _) => Done(result.toString(), El(remaining.toArray))
-                case State(result, _, esc, _) => jsonString(result, esc)
-              }
+            }
+            // Convert the state to an Iteratee
+            state match {
+              case State(_, Some(remaining), _, Some(err)) => Error(err, El(remaining.toArray))
+              case State(result, Some(remaining), _, _) => Done(result.toString(), El(remaining.toArray))
+              case State(result, _, esc, _) => jsonString(result, esc)
             }
           }
         })
@@ -716,6 +716,3 @@ object JsonIteratee {
   }
 
 }
-
-
-
