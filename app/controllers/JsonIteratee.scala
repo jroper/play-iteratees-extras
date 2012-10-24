@@ -220,30 +220,36 @@ object JsonIteratee {
    */
   def done[A](a: A) = Done[Array[Char], A](a)
 
+  def FailOnEof[E, A](f: E => Iteratee[E, A]): Iteratee[E, A] = Cont {
+    case in @ EOF => Error("Premature end of input", in)
+    case Empty => FailOnEof(f)
+    case El(data) => f(data)
+  }
+
   def skipWhitespace = dropWhile(_.isWhitespace)
 
-  def expect(value: Char) = peekOne.flatMap({
-    case Some(c) if c == value => Done(Unit)
-    case Some(c) => error("Expected '" + value + "' but got '" + c + "'")
-    case None => error("Premature end of input, expected '" + value + "'")
-  }).flatMap(_ => drop(1))
+  def expect(value: Char) = for {
+    ch <- peekOne
+    result <- ch match {
+      case Some(c) if c == value => done(Unit)
+      case Some(c) => error("Expected '" + value + "' but got '" + c + "'")
+      case None => error("Premature end of input, expected '" + value + "'")
+    }
+    _ <- drop(1)
+  } yield result
 
-  def drop(n: Int): Iteratee[Array[Char], Unit] = new Iteratee[Array[Char], Unit] {
-    def fold[B](folder: (Step[Array[Char], Unit]) => Future[B]) = {
-      folder(Step.Cont {
-        case in @ EOF => Done(Unit, in)
-        case Empty => this
-        case El(data) => {
-          val remaining = n - data.length
-          if (remaining == 0) {
-            Done(Unit, Empty)
-          } else if (remaining < 0) {
-            Done(Unit, El(data.drop(n)))
-          } else {
-            drop(remaining)
-          }
-        }
-      })
+  def drop(n: Int): Iteratee[Array[Char], Unit] = Cont {
+    case in @ EOF => Done(Unit, in)
+    case Empty => drop(n)
+    case El(data) => {
+      val remaining = n - data.length
+      if (remaining == 0) {
+        Done(Unit, Empty)
+      } else if (remaining < 0) {
+        Done(Unit, El(data.drop(n)))
+      } else {
+        drop(remaining)
+      }
     }
   }
 
@@ -253,50 +259,36 @@ object JsonIteratee {
     case None => error("Premature end of input, expected one of " + values.mkString("'", "', '", "'"))
   }).flatMap(c => drop(1).map(_ => c))
 
-  def dropWhile(p: Char => Boolean): Iteratee[Array[Char], Unit] = new Iteratee[Array[Char], Unit] {
-    def fold[B](folder: (Step[Array[Char], Unit]) => Future[B]) = {
-      folder(Step.Cont {
-        case in @ EOF => Done(Unit, in)
-        case Empty => this
-        case El(data) => {
-          val dropped = data.dropWhile(p)
-          if (dropped.length == 0) {
-            this
-          } else {
-            Done(Unit, El(dropped))
-          }
-        }
-      })
+  def dropWhile(p: Char => Boolean): Iteratee[Array[Char], Unit] = Cont {
+    case in @ EOF => Done(Unit, in)
+    case Empty => dropWhile(p)
+    case El(data) => {
+      val dropped = data.dropWhile(p)
+      if (dropped.length == 0) {
+        dropWhile(p)
+      } else {
+        Done(Unit, El(dropped))
+      }
     }
   }
 
-  def peekWhile(p: Char => Boolean, sb: StringBuilder = new StringBuilder): Iteratee[Array[Char], String] = new Iteratee[Array[Char], String] {
-    def fold[B](folder: (Step[Array[Char], String]) => Future[B]) = {
-      folder(Step.Cont {
-        case in @ EOF => Done(sb.toString(), in)
-        case Empty => this
-        case El(data) => {
-          val taken = data.takeWhile(p)
-          if (taken.length == data.length) {
-            sb.appendAll(taken)
-            peekWhile(p, sb)
-          } else {
-            val old = sb.clone()
-            Done(sb.appendAll(taken).toString(), El(old.appendAll(data).toArray))
-          }
-        }
-      })
+  def peekWhile(p: Char => Boolean, sb: StringBuilder = new StringBuilder): Iteratee[Array[Char], String] = Cont {
+    case in @ EOF => Done(sb.toString(), in)
+    case Empty => peekWhile(p, sb)
+    case El(data) => {
+      val taken = data.takeWhile(p)
+      if (taken.length == data.length) {
+        sb.appendAll(taken)
+        peekWhile(p, sb)
+      } else {
+        val old = sb.clone()
+        Done(sb.appendAll(taken).toString(), El(old.appendAll(data).toArray))
+      }
     }
   }
 
-  def takeOne(expected: => String) = new Iteratee[Array[Char], Char] {
-    def fold[B](folder: (Step[Array[Char], Char]) => Future[B]) = {
-      folder(Step.Cont {
-        case in @ EOF => Error("Expected " + expected + " but got EOF", in)
-        case Empty => this
-        case El(data) => data.headOption.map(c => Done(c, El(data.drop(1)))).getOrElse(this)
-      })
-    }
+  def takeOne(expected: => String): Iteratee[Array[Char], Char] = FailOnEof { data =>
+    data.headOption.map(c => Done(c, El(data.drop(1)))).getOrElse(takeOne(expected))
   }
 
   def peekOne = new Iteratee[Array[Char], Option[Char]] {
