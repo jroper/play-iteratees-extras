@@ -60,7 +60,7 @@ import scala.collection.mutable
  *       // the array itself are each parsed as JsObject.  Finally, the error list is mapped to a function that
  *       // will add it to the folded Errors
  *       "items"      -> jsArray(Iteratee.fold[JsObject, List[String]](Nil)({ (errors, item) =>
- *                         bulkImport(item).left.toOption(_ :: errors).getOrElse(errors)
+ *                         importItem(item).left.toOption(_ :: errors).getOrElse(errors)
  *                       }), (index:Int) => jsObject)
  *                       .map(errorList => (e:Errors) => Errors(e.id, errorList))
  *     ))
@@ -68,6 +68,10 @@ import scala.collection.mutable
  *   def bulkImport = Action(bodyParser) { request =>
  *     Ok("Imported export id " + request.body.id +
  *       " with the following errors:\n" + request.body.errors.mkString("\n"))
+ *   }
+ *
+ *   def importItem(item: JsObject): Either[String, String] = {
+ *     ...
  *   }
  * }}}
  */
