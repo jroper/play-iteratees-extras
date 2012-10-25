@@ -139,9 +139,10 @@ object JsonIteratees {
   def jsNull = jsonNull
 
   /**
-   * Parse a null or something else
+   * Parse a null or something else.  If null is found, it returns None, otherwise, it
+   * returns Some(A)
    */
-  def jsNullOr[A](valueParser: Iteratee[Array[Char], A]) = jsonNullOr(valueParser)
+  def jsNullOr[A](valueParser: Iteratee[Array[Char], A]): Iteratee[Array[Char], Option[A]] = jsonNullOr(valueParser)
 
   /**
    * Parse a generic value
@@ -314,11 +315,15 @@ object JsonParser {
     }
   }
 
-  def takeOneOf(values: Char*) = peekOne.flatMap({
-    case Some(c) if values.contains(c) => done(c)
-    case Some(c) => error("Expected one of " + values.mkString("'", "', '", "'") + " but got '" + c + "'")
-    case None => error("Premature end of input, expected one of " + values.mkString("'", "', '", "'"))
-  }).flatMap(c => drop(1).map(_ => c))
+  def takeOneOf(values: Char*) = for {
+    ch <- peekOne
+    result <- ch match {
+      case Some(c) if values.contains(c) => done(c)
+      case Some(c) => error("Expected one of " + values.mkString("'", "', '", "'") + " but got '" + c + "'")
+      case None => error("Premature end of input, expected one of " + values.mkString("'", "', '", "'"))
+    }
+    _ <- drop(1)
+  } yield result
 
   def dropWhile(p: Char => Boolean): Iteratee[Array[Char], Unit] = Cont {
     case in @ EOF => Done(Unit, in)

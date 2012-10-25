@@ -3,7 +3,7 @@ package test
 import org.specs2.mutable._
 
 import play.api.libs.iteratee.{Enumerator, Iteratee}
-import controllers.JsonIteratee
+import controllers.JsonParser
 import play.api.libs.concurrent.PlayPromise
 
 /**
@@ -45,7 +45,7 @@ class ApplicationSpec extends Specification {
   }
 
   def convertBytes(byteArrays: Array[Byte]*) = new String(
-      new PlayPromise(Enumerator(byteArrays:_*) &> JsonIteratee.toCharArray() |>>> Iteratee.consume[Array[Char]]()).await.get
+      new PlayPromise(Enumerator(byteArrays:_*) &> JsonParser.toCharArray() |>>> Iteratee.consume[Array[Char]]()).await.get
     )
 
   def split(bytes: Array[Byte], pos: Int*): List[Array[Byte]] = {
