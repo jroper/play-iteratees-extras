@@ -5,5 +5,7 @@
 # Home page
 POST     /                           controllers.Application.index
 
+POST     /bulkImport                 controllers.Application.bulkImport
+
 # Map static resources from the /public folder to the /assets URL path
 GET     /assets/*file               controllers.Assets.at(path="/public", file)

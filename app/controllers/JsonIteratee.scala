@@ -1,20 +1,13 @@
 package controllers
 
 import play.api.libs.iteratee._
-import concurrent.Future
-import play.api.libs.iteratee.Input.{El, EOF, Empty}
-import play.api.mvc.{RequestHeader, BodyParser}
+import play.api.libs.iteratee.Input._
 import play.api.libs.json._
-import scala.concurrent.ExecutionContext.Implicits.global
+import play.api.mvc.{RequestHeader, BodyParser}
+import concurrent.ExecutionContext.Implicits.global
+import concurrent.Future
 import java.nio.{ByteBuffer, CharBuffer}
 import java.nio.charset.{CharsetDecoder, Charset}
-import play.api.libs.json.JsArray
-import play.api.libs.json.JsString
-import play.api.libs.json.JsBoolean
-import scala.{Array, Some}
-import play.api.libs.json.JsNumber
-import play.api.libs.json.JsObject
-import scala.collection.mutable
 
 /**
  * Body parser for reactively parsing JSON.  Used with no arguments, it just parses a JsValue into memory.  However,
@@ -37,47 +30,67 @@ import scala.collection.mutable
  * arrive, like this:
  *
  * {{{
- *   import JsonBodyParser._
+ * import JsonBodyParser._
+ * import JsonIteratees._
+ * import JsonEnumeratees._
  *
- *   // case class that we will fold the result of the parsing into
- *   case class Errors(id: Int = 0, errors: List[String] = Nil)
+ * // case class that we will fold the result of the parsing into
+ * case class Errors(id: Int = 0, errors: List[String] = Nil)
  *
- *   // Map function that ignores the input, and returns an identity function to leave errors alone
- *   def ignore[A]: A => Errors => Errors = (_) => identity[Errors]
+ * // Map function that ignores the input, and returns an identity function to leave errors alone
+ * def ignore[A]: A => Errors => Errors = (_) => identity[Errors]
  *
- *   // The parser
- *   val bodyParser = parser(
- *     // Expect an object.  The first argument is a folding iteratee.  It folds a function that updates
- *     // the current error into errors.  The rest of the arguments are tuples of expected keys to handers
- *     // for them.
- *     jsObject(Iteratee.fold[Errors => Errors, Errors](Errors())((e, f) => f(e)),
- *       // Handle the exportId as a number, and map it to a function that stores the id in Errors
- *       "exportId"   -> jsNumber.map(id => (e:Errors) => Errors(id.value.toInt, e.errors),
- *       "exportDate" -> jsString.map(ignore),
- *       "exportUser" -> jsString.map(ignore),
- *       // Handle the items as an array, using a folding iteratee to fold each value into a list, the fold
- *       // function imports the item into a database, and adds a potential error to the list.  The values of
- *       // the array itself are each parsed as JsObject.  Finally, the error list is mapped to a function that
- *       // will add it to the folded Errors
- *       "items"      -> jsArray(Iteratee.fold[JsObject, List[String]](Nil)({ (errors, item) =>
- *                         importItem(item).left.toOption(_ :: errors).getOrElse(errors)
- *                       }), (index:Int) => jsObject)
- *                       .map(errorList => (e:Errors) => Errors(e.id, errorList))
- *     ))
+ * // The parser
+ * val bodyParser = parser(
+ *   // A JSON object enumerator, expecting keys, using the specified parsers for the values of each.
+ *   // Each value gets mapped to a function, that will be used later to fold them into our Errors result.
+ *   jsObject(
+ *     // Handle the exportId as a number, and map it to a function that stores the id in Errors
+ *     "exportId" -> jsNumber.map(id => (e: Errors) => Errors(id.value.toInt, e.errors)),
+ *     "exportDate" -> jsNullOr(jsString).map(ignore),
+ *     "exportUser" -> jsNullOr(jsString).map(ignore),
+ *     // Handle the items as an array, parsing the values as objects, then using enumeratee composition,
+ *     // parse the item, import the item, and finally collect the errors and map them to the function
+ *     // for folding into the Errors result
+ *     "items" -> (jsArray(jsValues(jsSimpleObject)) ><> parseItem ><> importItem
+ *       &>> Iteratee.getChunks[String].map(errorList => (e: Errors) => Errors(e.id, errorList)))
+ *   // Fold the error functions into an Errors result
+ *   ) &>> Iteratee.fold[Errors => Errors, Errors](Errors())((e, f) => f(e))
+ * )
  *
- *   def bulkImport = Action(bodyParser) { request =>
+ * // The items we want to import
+ * case class Item(id: Int, name: String, description: String)
+ *
+ * // Enumeratee that parses a JsObject into an item.  Uses a simple mapping Enumeratee.
+ * def parseItem: Enumeratee[JsObject, Option[Item]] = Enumeratee.map {obj =>
+ *   for {
+ *     id <- (obj \ "id").asOpt[Int]
+ *     name <- (obj \ "name").asOpt[String]
+ *     description <- (obj \ "description").asOpt[String]
+ *   } yield Item(id, name, description)
+ * }
+ *
+ * // Enumeratee that imports items.  Uses an input mapping enumeratee, and only passes a result
+ * // along if there is an error
+ * def importItem: Enumeratee[Option[Item], String] = Enumeratee.mapInput(_ match {
+ *   case Input.El(Some(item)) =>
+ *     println(item)
+ *     Input.Empty
+ *   case Input.El(None) => Input.El("An error")
+ *   case other => other.map(_ => "")
+ * })
+ *
+ * // Our action that uses the body parser
+ * def bulkImport = Action(bodyParser) {
+ *   request =>
  *     Ok("Imported export id " + request.body.id +
  *       " with the following errors:\n" + request.body.errors.mkString("\n"))
- *   }
- *
- *   def importItem(item: JsObject): Either[String, String] = {
- *     ...
- *   }
+ * }
  * }}}
  */
 object JsonBodyParser {
 
-  import JsonIteratee._
+  import JsonParser._
 
   /**
    * Create a parser
@@ -89,76 +102,21 @@ object JsonBodyParser {
       toCharArray() ><> errorReporter &>> handler.map(result => Right(result))
     }
   }
+}
 
-  /**
-   * Parse an array
-   *
-   * @param handler An iteratee to handle the JsValue values.
-   */
-  def jsArray[A](handler: Iteratee[JsValue, A]): Iteratee[Array[Char], A] = jsArray(handler, jsonValueForEach)
+object JsonIteratees {
 
-  /**
-   * Parse an array
-   *
-   * @param resultHandler An iteratee to handle the values
-   * @param valueParsers  A sequence of iteratees to parse each value.  The first one will parse the first value, the
-   *                      second one will parse the second value, and so on.  If more values than handlers are given,
-   *                      an error will be thrown.
-   */
-  def jsArray[V, A](resultHandler: Iteratee[V, A], valueParsers: Iteratee[Array[Char], V]*): Iteratee[Array[Char], A] = {
-    val parserAt = valueParsers.lift
-    jsArray(resultHandler, index => parserAt(index).getOrElse(Error("No handler provided for element " + index + " of the array", Empty)))
-  }
-
-  /**
-   * Parse an array
-   *
-   * @param resultHandler An iteratee to handle the values
-   * @param valueParser A function that maps the index in the array to an iteratee to parse the value
-   */
-  def jsArray[V, A](resultHandler: Iteratee[V, A],
-                    valueParser: Int => Iteratee[Array[Char], V]): Iteratee[Array[Char], A] = jsonArray(resultHandler, valueParser)
-
-  /**
-   * Parse an object
-   *
-   * @param handler A handler to handle key to JsValue pairs
-   */
-  def jsObject[A](handler: Iteratee[(String, JsValue), A]): Iteratee[Array[Char], A] = jsObject(handler, jsonKeyValuePair)
-
-  /**
-   * Parse an object
-   *
-   * @param resultHandler A handler to handle the parsed values
-   * @param valueParsers  A mapping of keys to iteratees to parse their values.  If a parser is not found for a given
-   *                      key, an error will be raised.
-   */
-  def jsObject[V, A](resultHandler: Iteratee[V, A], valueParsers: (String, Iteratee[Array[Char], V])*): Iteratee[Array[Char], A] = {
-    val parserMap = mutable.Map(valueParsers:_*)
-    jsObject(resultHandler, key => parserMap.get(key).map({ p =>
-      parserMap -= key
-      p
-    }).getOrElse(Error("Unexpected key found in JSON: " + key, Empty)))
-  }
-
-  /**
-   * Parse an object
-   *
-   * @param resultHandler A handler to handle the parsed values
-   * @param valueParser   A function that returns an iteratee to parse the value for a given key.
-   */
-  def jsObject[V, A](resultHandler: Iteratee[V, A],
-                     valueParser: String => Iteratee[Array[Char], V]) = jsonObject(resultHandler, valueParser)
+  import JsonParser._
 
   /**
    * Parse an object
    */
-  def jsObject = jsonObject()
+  def jsSimpleObject = jsonObject()
 
   /**
    * Parse an array
    */
-  def jsArray = jsonArray()
+  def jsSimpleArray = jsonArray()
 
   /**
    * Parse a string
@@ -181,13 +139,116 @@ object JsonBodyParser {
   def jsNull = jsonNull
 
   /**
+   * Parse a null or something else
+   */
+  def jsNullOr[A](valueParser: Iteratee[Array[Char], A]) = jsonNullOr(valueParser)
+
+  /**
    * Parse a generic value
    */
   def jsValue = jsonValue
 
+  /**
+   * Use to parse all the values of a map or array as a single type, as determined by the passed in parser.
+   *
+   * For use with JsEnumeratee.jsObject and JsEnumaretee.jsArray.
+   */
+  def jsValues[A, I](valueParser: Iteratee[Array[Char], A]) = (index: I) => valueParser
+
+  /**
+   * Use to parse all the values of a map into key value pairs, using the given parser to parse the value.
+   *
+   * For use with JsEnumeratee.jsObject.
+   */
+  def jsKeyValues[A](valueParser: Iteratee[Array[Char], A]) = (key: String) => valueParser.map((value) => (key, value))
+
+  /**
+   * Use to parse all the values of an array into indexed pairs, using the given parser to parse the value.
+   *
+   * For use with JsEnumeratee.jsArray.
+   */
+  def jsIndexedValues[A](valueParser: Iteratee[Array[Char], A]) = (index: Int) => valueParser.map((value) => (index, value))
 }
 
-object JsonIteratee {
+object JsonEnumeratees {
+
+  import JsonParser._
+
+  /**
+   * Enumeratee for a JSON object.  Adapts a stream of character arrays into a stream of key to JsValue pairs.
+   */
+  def jsObject: Enumeratee[Array[Char], (String, JsValue)] =
+    jsObject(JsonIteratees.jsKeyValues(jsonValue))
+
+  /**
+   * Enumeratee for a JSON object.  Adapts a stream of character arrays into a stream of parsed key value
+   * pairs.  The pairs are parsed according to the passed in key to iteratee mappings.
+   *
+   * @param valueParsers  A mapping of keys to iteratees to parse their values.  If a parser is not found for a given
+   *                      key, an error will be raised.
+   */
+  def jsObject[V](valueParsers: (String, Iteratee[Array[Char], V])*): Enumeratee[Array[Char], V] = {
+    jsObject((key: String) => Map(valueParsers:_*).get(key).getOrElse(Error("Unexpected key found in JSON: " + key, Empty)))
+  }
+
+  /**
+   * Enumeratee for a JSON object.  Adapts a stream of character arrays into a stream of parsed key value
+   * pairs.  The pairs are parsed according to the valueParser, which takes a key and returns an iteratee
+   * to parse it's value.
+   *
+   * @param valueParser   A function that returns an iteratee to parse the value for a given key.
+   */
+  def jsObject[V](valueParser: String => Iteratee[Array[Char], V]) = new Enumeratee[Array[Char], V] {
+    def step[A](inner: Iteratee[V, A])(in: Input[V]): Iteratee[V, Iteratee[V, A]] = in match {
+      case EOF => Done(inner, in)
+      case _ => Cont(step(Iteratee.flatten(inner.feed(in))))
+    }
+
+    def applyOn[A](inner: Iteratee[V, A]): Iteratee[Array[Char], Iteratee[V, A]] = {
+      jsonObject(Cont(step(inner)), valueParser)
+    }
+  }
+
+  /**
+   * Enumeratee for a JSON array.  Adapts a stream of character arrays into a stream of JsValues.
+   */
+  def jsArray: Enumeratee[Array[Char], JsValue] = jsArray((index: Int) => jsonValue)
+
+  /**
+   * Enumeratee for a JSON array.  Adapts a stream of character arrays into a stream of parsed values
+   * The values are parsed according to the passed sequence of iteratees.
+   *
+   * @param valueParsers  A sequence of iteratees to parse values.  If more elements are found then the
+   *                      sequence contains, an error is thrown.
+   */
+  def jsArray[V](valueParsers: (Int, Iteratee[Array[Char], V])*): Enumeratee[Array[Char], V] = {
+    val parserAt = valueParsers.lift
+    jsArray((index: Int) => parserAt(index).map(_._2).getOrElse(Error("No handler provided for element " + index + " of the array", Empty)))
+  }
+
+  /**
+   * Enumeratee for a JSON array.  Adapts a stream of character arrays into a stream of parsed values
+   * The values are parsed according to the valueParser, which takes an array index and returns an iteratee
+   * to parse it's value.
+   *
+   * @param valueParser   A function that returns an iteratee to parse the value for a array index.
+   */
+  def jsArray[V](valueParser: Int => Iteratee[Array[Char], V]) = new Enumeratee[Array[Char], V] {
+    def step[A](inner: Iteratee[V, A])(in: Input[V]): Iteratee[V, Iteratee[V, A]] = in match {
+      case EOF => Done(inner, in)
+      case _ => {
+        Cont(step(Iteratee.flatten(inner.feed(in))))
+      }
+    }
+
+    def applyOn[A](inner: Iteratee[V, A]): Iteratee[Array[Char], Iteratee[V, A]] = {
+      jsonArray(Cont(step(inner)), valueParser)
+    }
+  }
+
+}
+
+object JsonParser {
 
   /**
    * Creates a JSON object from a key value iteratee
@@ -272,17 +333,15 @@ object JsonIteratee {
     }
   }
 
-  def peekWhile(p: Char => Boolean, sb: StringBuilder = new StringBuilder): Iteratee[Array[Char], String] = Cont {
-    case in @ EOF => Done(sb.toString(), in)
-    case Empty => peekWhile(p, sb)
+  def peekWhile(p: Char => Boolean, peeked: Array[Char] = Array[Char]()): Iteratee[Array[Char], String] = Cont {
+    case in @ EOF => Done(new String(peeked), El(peeked))
+    case Empty => peekWhile(p, peeked)
     case El(data) => {
       val taken = data.takeWhile(p)
       if (taken.length == data.length) {
-        sb.appendAll(taken)
-        peekWhile(p, sb)
+        peekWhile(p, peeked ++ taken)
       } else {
-        val old = sb.clone()
-        Done(sb.appendAll(taken).toString(), El(old.appendAll(data).toArray))
+        Done(new String(peeked ++ taken), El(peeked ++ data))
       }
     }
   }
@@ -307,74 +366,6 @@ object JsonIteratee {
   // JSON parsing
   //
 
-  /**
-   * Enumeratee for JSON key values
-   */
-  def jsonKeyValues[V](valueHandler: String => Iteratee[Array[Char], V]) = new Enumeratee[Array[Char], V] {
-    def step[A](inner: Iteratee[V, A])(in: Input[Array[Char]]): Iteratee[Array[Char], Iteratee[V, A]] = {
-      in match {
-        case EOF => Error("Unexpected EOF in object", in)
-        case Empty => Cont(step(inner))
-        case El(data) => for {
-          fed <- Iteratee.flatten(Enumerator.enumerate(Seq(data))(for {
-              _ <- skipWhitespace
-              keyValue <- jsonKeyValue(valueHandler)
-            } yield {
-              Iteratee.flatten(Enumerator.enumerate(Seq(keyValue)) |>> inner)
-            }))
-          _ <- skipWhitespace
-          ch <- takeOneOf('}', ',')
-          nextStep <- ch match {
-            case ',' => Iteratee.flatten(fed.pureFold(_ match {
-              case Step.Done(a, e) => done(Done(a, e))
-              case Step.Cont(k) => Cont((in:Input[Array[Char]]) => step(Cont(k))(in))
-              case Step.Error(err, e) => Error[Array[Char]](err, EOF)
-            }))
-            case '}' => done(Iteratee.flatten(fed.feed(EOF)))
-          }
-        } yield nextStep
-      }
-    }
-
-    def applyOn[A](inner: Iteratee[V, A]): Iteratee[Array[Char], Iteratee[V, A]] = {
-      Cont(step(inner))
-    }
-  }
-
-  /**
-   * Enumeratee for JSON values
-   */
-  def jsonArrayValues[V](valueHandler: Int => Iteratee[Array[Char], V]) = new Enumeratee[Array[Char], V] {
-    def step[A](inner: Iteratee[V, A], index: Int = 0)(in: Input[Array[Char]]): Iteratee[Array[Char], Iteratee[V, A]] = {
-      in match {
-        case EOF => Error("Unexpected EOF in array", in)
-        case Empty => Cont(step(inner))
-        case in @ El(data) => for {
-          fed <- Iteratee.flatten(Enumerator.enumerate(Seq(data))(for {
-              _ <- skipWhitespace
-              value <- valueHandler(index)
-            } yield {
-              Iteratee.flatten(Enumerator.enumerate(Seq(value)) |>> inner)
-            }))
-          _ <- skipWhitespace
-          ch <- takeOneOf(']', ',')
-          nextStep <- ch match {
-            case ',' => Iteratee.flatten(fed.pureFold(_ match {
-              case Step.Done(a, e) => done(Done(a, e))
-              case Step.Cont(k) => Cont((in: Input[Array[Char]]) => step(Cont(k), index + 1)(in))
-              case Step.Error(err, e) => Error[Array[Char]](err, EOF)
-            }))
-            case ']' => done(Iteratee.flatten(fed.feed(EOF)))
-          }
-        } yield nextStep
-      }
-    }
-
-    def applyOn[A](inner: Iteratee[V, A]): Iteratee[Array[Char], Iteratee[V, A]] = {
-      Cont(step(inner))
-    }
-  }
-
   def jsonKeyValue[A](valueHandler: String => Iteratee[Array[Char], A]) = for {
     key <- jsonString()
     _ <- skipWhitespace
@@ -385,22 +376,47 @@ object JsonIteratee {
     value
   }
 
-  def jsonKeyValuePair: String => Iteratee[Array[Char], (String, JsValue)] = key => jsonValue.map(value => (key, value))
+  def jsonKeyValues[A, V](keyValuesHandler: Iteratee[V, A],
+                           valueHandler: String => Iteratee[Array[Char], V]
+                            ): Iteratee[Array[Char], A] = for {
+    _ <- skipWhitespace
+    fed <- jsonKeyValue(valueHandler).map(keyValue => Iteratee.flatten(keyValuesHandler.feed(El(keyValue))))
+    _ <- skipWhitespace
+    ch <- takeOneOf('}', ',')
+    keyValues <- ch match {
+      case '}' => Iteratee.flatten(fed.run.map((a: A) => done(a)))
+      case ',' => jsonKeyValues(fed, valueHandler)
+    }
+  } yield keyValues
+
 
   def jsonObject[A, V](keyValuesHandler: Iteratee[V, A] = jsonObjectCreator,
-                       valueHandler: String => Iteratee[Array[Char], V] = jsonKeyValuePair) = for {
+                       valueHandler: String => Iteratee[Array[Char], V] = (key: String) => jsonValue.map(value => (key, value))
+                        ) = for {
     _ <- expect('{')
     - <- skipWhitespace
     ch <- peekOne
     keyValues <- ch match {
-      case Some('}') => drop(1).flatMap(_ => Iteratee.flatten(keyValuesHandler.run.map { a: A =>
-        Done[Array[Char], A](a)
-      }))
-      case _ => jsonKeyValues(valueHandler) &>> keyValuesHandler
+      case Some('}') => drop(1).flatMap(_ => Iteratee.flatten(keyValuesHandler.run.map((a: A) => done(a))))
+      case _ => jsonKeyValues(keyValuesHandler, valueHandler)
     }
   } yield keyValues
 
   def jsonValueForEach: Int => Iteratee[Array[Char], JsValue] = index => jsonValue
+
+  def jsonArrayValues[A, V](valuesHandler: Iteratee[V, A],
+                            valueHandler: Int => Iteratee[Array[Char], V],
+                            index: Int = 0): Iteratee[Array[Char], A] = for {
+    _ <- skipWhitespace
+    fed <- valueHandler(index).map(value => Iteratee.flatten(valuesHandler.feed(El(value))))
+    _ <- skipWhitespace
+    ch <- takeOneOf(']', ',')
+    values <- ch match {
+      case ']' => Iteratee.flatten(fed.run.map((a: A) => done(a)))
+      case ',' => jsonArrayValues(fed, valueHandler, index + 1)
+    }
+  } yield values
+
 
   def jsonArray[A, V](valuesHandler: Iteratee[V, A] = jsonArrayCreator,
                       valueHandler: Int => Iteratee[Array[Char], V] = jsonValueForEach) = for {
@@ -410,11 +426,9 @@ object JsonIteratee {
     values <- ch match {
       case Some(']') => for {
         _ <- drop(1)
-        h <- Iteratee.flatten(valuesHandler.run.map { a: A =>
-            Done[Array[Char], A](a)
-          })
-      } yield h
-      case _ => jsonArrayValues(valueHandler) &>> valuesHandler
+        empty <- Iteratee.flatten(valuesHandler.run.map((a: A) => done(a)))
+      } yield empty
+      case _ => jsonArrayValues(valuesHandler, valueHandler)
     }
   } yield values
 
@@ -448,6 +462,14 @@ object JsonIteratee {
     }
     _ <- dropWhile(ch => ch >= 'a' && ch <= 'z')
   } yield jsBoolean
+
+  def jsonNullOr[A](other: Iteratee[Array[Char], A]) = for {
+    nullStr <- peekWhile(ch => ch >= 'a' && ch <= 'z')
+    value <- nullStr match {
+      case n if n == "null" => dropWhile(ch => ch >= 'a' && ch <= 'z').map(_ => None)
+      case o => other.map(v => Some(v))
+    }
+  } yield value
 
   def jsonNull = for {
     nullStr <- peekWhile(ch => ch >= 'a' && ch <= 'z')
