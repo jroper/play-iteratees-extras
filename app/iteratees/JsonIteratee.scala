@@ -1,4 +1,4 @@
-package controllers
+package iteratees
 
 import play.api.libs.iteratee._
 import play.api.libs.iteratee.Input._

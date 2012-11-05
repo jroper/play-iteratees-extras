@@ -1,9 +1,8 @@
-package test
+package iteratees
 
 import org.specs2.mutable._
 
 import play.api.libs.iteratee.{Enumerator, Iteratee}
-import controllers.JsonParser
 import play.api.libs.concurrent.PlayPromise
 
 /**
@@ -11,7 +10,7 @@ import play.api.libs.concurrent.PlayPromise
  * You can mock out a whole application including requests, plugins etc.
  * For more information, consult the wiki.
  */
-class ApplicationSpec extends Specification {
+object CharArrayEnumerateeSpec extends Specification {
   
   "CharArrayEnumeratee" should {
     "decode one byte chunk" in {
