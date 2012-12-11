@@ -4,16 +4,15 @@ import org.specs2.mutable._
 
 import play.api.libs.iteratee.{Enumerator, Iteratee}
 import play.api.libs.concurrent.PlayPromise
-import play.extras.iteratees.JsonParser
 
 /**
  * Add your spec here.
  * You can mock out a whole application including requests, plugins etc.
  * For more information, consult the wiki.
  */
-object CharArrayEnumerateeSpec extends Specification {
+object EncodingSpec extends Specification {
   
-  "CharArrayEnumeratee" should {
+  "decode" should {
     "decode one byte chunk" in {
       convertBytes("Hello".getBytes) must_== "Hello"
     }
@@ -39,7 +38,7 @@ object CharArrayEnumerateeSpec extends Specification {
   }
 
   def convertBytes(byteArrays: Array[Byte]*) = new String(
-      new PlayPromise(Enumerator(byteArrays:_*) &> JsonParser.toCharArray() |>>> Iteratee.consume[Array[Char]]()).await.get
+      new PlayPromise(Enumerator(byteArrays:_*) &> Encoding.decode() |>>> Iteratee.consume[Array[Char]]()).await.get
     )
 
   def split(bytes: Array[Byte], pos: Int*): List[Array[Byte]] = {

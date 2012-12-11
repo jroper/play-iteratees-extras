@@ -4,9 +4,8 @@ import concurrent.Await
 import play.api.libs.iteratee.{Iteratee, Enumeratee, Enumerator}
 import concurrent.duration.Duration
 import org.specs2.mutable.Specification
-import org.specs2.internal.scalaz.Bytes
 
-object GzipEnumerateeSpec extends Specification {
+object GzipSpec extends Specification {
 
   "gzip" should {
 

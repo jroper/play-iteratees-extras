@@ -5,7 +5,7 @@ import org.specs2.mutable._
 import play.api.libs.iteratee._
 import play.api.libs.concurrent.PlayPromise
 
-object CsvIterateeSpec extends Specification {
+object CsvSpec extends Specification {
 
   "csv values iteratee" should {
     "parse a single value" in {
@@ -34,8 +34,8 @@ object CsvIterateeSpec extends Specification {
   }
 
   def parseLine(str: String) =
-    new PlayPromise(Enumerator(str.toCharArray:_*) |>>> CsvIteratee.values()).await.get
+    new PlayPromise(Enumerator(str.toCharArray:_*) |>>> Csv.values()).await.get
 
   def parseLines(str: String) =
-    new PlayPromise(Enumerator(str.toCharArray:_*) &> CsvIteratee.csvLines |>>> Iteratee.getChunks).await.get
+    new PlayPromise(Enumerator(str.toCharArray:_*) &> Csv.csvLines |>>> Iteratee.getChunks).await.get
 }

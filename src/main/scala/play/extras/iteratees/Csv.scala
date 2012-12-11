@@ -2,7 +2,11 @@ package play.extras.iteratees
 
 import play.api.libs.iteratee._
 
-object CsvIteratee {
+/**
+ * CSV iteratee.  Since it only works on one char at a time, it's not really useful.  But it's great for learning or
+ * teaching iteratees.
+ */
+object Csv {
   def dropWhile(p: Char => Boolean): Iteratee[Char, Unit] = Cont {
     case in@Input.El(char) if !p(char) => Done(Unit, in)
     case in@Input.EOF => Done(Unit, in)
