@@ -1,4 +1,4 @@
-package iteratees
+package play.extras.iteratees
 
 import play.api.libs.iteratee._
 
@@ -9,7 +9,9 @@ object CsvIteratee {
     case _ => dropWhile(p)
   }
 
-  def dropSpaces = dropWhile(c => c == ' ' || c == '\t' || c == '\r')
+  def dropSpaces = dropWhile(c =>
+    c == ' ' || c == '\t' || c == '\r'
+  )
 
   def takeWhile(p: Char => Boolean, data: Seq[Char] = IndexedSeq[Char]()): Iteratee[Char, Seq[Char]] = Cont {
     case in@Input.El(char) => if (p(char)) {

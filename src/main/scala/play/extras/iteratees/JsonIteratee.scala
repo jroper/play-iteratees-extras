@@ -1,4 +1,4 @@
-package iteratees
+package play.extras.iteratees
 
 import play.api.libs.iteratee._
 import play.api.libs.iteratee.Input._

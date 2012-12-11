@@ -1,9 +1,10 @@
-package iteratees
+package play.extras.iteratees
 
 import org.specs2.mutable._
 
 import play.api.libs.iteratee.{Enumerator, Iteratee}
 import play.api.libs.concurrent.PlayPromise
+import play.extras.iteratees.JsonParser
 
 /**
  * Add your spec here.
@@ -26,16 +27,10 @@ object CharArrayEnumerateeSpec extends Specification {
       convertBytes(split("ö".getBytes("UTF-8"), 1): _*) must_== "ö"
     }
     "decode byte chunks with lots of split characters" in {
-      println()
-      println("Lots of split characters")
-      println("========================")
       convertBytes(split("ßöé☃".getBytes("UTF-8"), 1, 3, 4, 6): _*) must_== "ßöé☃"
     }
     "decode multi byte characters that have been split multiple times" in {
       // rendering note: the character below is 4 bytes. Your text editor/IDE may have issues.
-      println()
-      println("Multiple splits")
-      println("===============")
       convertBytes(split("𠜎".getBytes("UTF-8"), 1, 2, 3): _*) must_== "𠜎"
     }
     "decode an empty byte chunk" in {

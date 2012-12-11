@@ -1,4 +1,4 @@
-package iteratees
+package play.extras.iteratees
 
 import org.specs2.mutable._
 
