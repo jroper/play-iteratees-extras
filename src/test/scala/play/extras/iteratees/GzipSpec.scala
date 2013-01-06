@@ -91,7 +91,7 @@ object GzipSpec extends Specification {
     }
 
     "gunzip large random input in small chunks" in {
-      test(scala.util.Random.nextString(10000), gzip = Gzip.gzip(50))
+      test(scala.util.Random.nextString(10000), gzip = Gzip.gzip(10))
     }
 
     def test(value: String, gunzip: Enumeratee[Array[Byte], Array[Byte]] = Gzip.gunzip(), gzip: Enumeratee[Array[Byte], Array[Byte]] = Gzip.gzip()) {
