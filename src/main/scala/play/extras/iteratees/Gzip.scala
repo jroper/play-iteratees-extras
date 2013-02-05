@@ -446,6 +446,11 @@ object Gzip {
  */
 class GzipFilter(gzip: Enumeratee[Array[Byte], Array[Byte]] = Gzip.gzip(8192), chunkedThreshold: Int = 102400) extends EssentialFilter {
 
+  /**
+   * This allows it to be used from Java
+   */
+  def this() = this(Gzip.gzip(8192), 102400)
+
   def apply(next: EssentialAction) = new EssentialAction {
     def apply(request: RequestHeader) = {
       if (mayCompress(request)) {
