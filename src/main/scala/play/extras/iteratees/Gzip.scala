@@ -3,6 +3,10 @@ package play.extras.iteratees
 import play.api.libs.iteratee._
 import play.api.libs.iteratee.Enumeratee.CheckDone
 import java.util.zip._
+import play.api.mvc._
+import play.api.http._
+import org.jboss.netty.handler.codec.http.HttpHeaders.Names
+import play.api.libs.concurrent.Execution.Implicits._
 
 /**
  * Enumeratees for dealing with gzip streams
@@ -406,4 +410,98 @@ object Gzip {
       (bytes(offset + 1) & 0xff) << 8 |
       (bytes(offset) & 0xff)
   }
+}
+
+/**
+ * A Gzip filter.
+ *
+ * This filter may gzip the responses for any requests that aren't HEAD requests and specify an accept encoding of gzip.
+ *
+ * It will only gzip non chunked responses.  Chunked responses are often comet responses, gzipping will interfere in
+ * that case.  If you want to gzip a chunked response, you can apply the gzip enumeratee manually to the enumerator,
+ * it's not hard.
+ *
+ * For non chunked responses, it won't gzip under the following conditions:
+ *
+ * - The response code is 204 or 304 (these codes MUST NOT contain a body, and an empty gzipped response is 20 bytes
+ * long)
+ * - The response already defines a Content-Encoding header
+ * - The response content type is text/event-stream
+ *
+ * The filter cannot know the content length of its gzipped response, so it will never send it.  Play handles this by
+ * buffering the response to find out the content length.  For large files this obviously will cause a problem, so if
+ * a content length is set in the response, and it's greater than the configured chunkedThreshold (100kb by default),
+ * this filter will instead return a chunked result.
+ *
+ * You can use this filter in your project simply by including it in the Global filters, like this:
+ *
+ * {{{
+ * object Global extends WithFilters(new GzipFilter()) {
+ *   ...
+ * }
+ * }}}
+ *
+ * @param gzip The gzip enumeratee to use
+ * @param chunkedThreshold The content length threshold, after which the filter will switch to chunking the result
+ */
+class GzipFilter(gzip: Enumeratee[Array[Byte], Array[Byte]] = Gzip.gzip(8192), chunkedThreshold: Int = 102400) extends EssentialFilter {
+
+  def apply(next: EssentialAction) = new EssentialAction {
+    def apply(request: RequestHeader) = {
+      if (mayCompress(request)) {
+        next(request).map {
+          case plain: PlainResult => handlePlainResult(plain)
+          case async: AsyncResult => async.transform(handlePlainResult _)
+        }
+      } else {
+        next(request)
+      }
+    }
+  }
+
+  def handlePlainResult(result: PlainResult): PlainResult = result match {
+    case simple @ SimpleResult(header, body) => {
+      if (shouldCompress(header)) {
+        if (header.headers.get(Names.CONTENT_LENGTH).filter(_ != "-1").filter(_.toInt >= chunkedThreshold).isDefined) {
+          // Switch to a chunked result, so that Play doesn't attempt to buffer in memory
+          ChunkedResult(createHeader(header), (it: Iteratee[Array[Byte], Unit]) => body &> writeableEnumeratee(simple.writeable) &> gzip |>> it)
+        } else {
+          SimpleResult(createHeader(header), body &> writeableEnumeratee(simple.writeable) &> gzip)
+        }
+      } else {
+        result
+      }
+    }
+    // Don't even both trying to compress chunked result, it's likely some sort of comet thing.
+    case c: ChunkedResult[_] => c
+  }
+
+  /**
+   * Whether this request may be compressed.
+   */
+  def mayCompress(request: RequestHeader) = request.method != "HEAD" &&
+    request.headers.get(Names.ACCEPT_ENCODING).flatMap(_.split(',').find(_ == "gzip")).isDefined
+
+  /**
+   * Whether this response should be compressed.  Responses that may not contain content won't be compressed, nor will
+   * responses that already define a content encoding, and server sent event response will not be compressed.
+   */
+  def shouldCompress(header: ResponseHeader) = isAllowedContent(header) && isNotAlreadyCompressed(header) && isNotServerSentEvents(header)
+
+  def isNotServerSentEvents(header: ResponseHeader) = !header.headers.get(Names.CONTENT_TYPE).exists(_ == MimeTypes.EVENT_STREAM)
+
+  def isAllowedContent(header: ResponseHeader) = header.status != Status.NO_CONTENT && header.status != Status.NOT_MODIFIED
+
+  def isNotAlreadyCompressed(header: ResponseHeader) = header.headers.get(Names.CONTENT_ENCODING).isEmpty
+
+  def createHeader(header: ResponseHeader): ResponseHeader = {
+    // Only allow content length if it's -1 (meaning, a stream that will only terminate by closing the connection)
+    val withoutContentLength = header.headers.get(Names.CONTENT_LENGTH)
+      .filter(_ != "-1")
+      .map(h => header.headers - Names.CONTENT_LENGTH)
+      .getOrElse(header.headers)
+    header.copy(headers = withoutContentLength + (Names.CONTENT_ENCODING -> "gzip") + (Names.VARY -> Names.ACCEPT_ENCODING))
+  }
+
+  def writeableEnumeratee[A](writeable: Writeable[A]): Enumeratee[A, Array[Byte]] = Enumeratee.map(a => writeable.transform(a))
 }
