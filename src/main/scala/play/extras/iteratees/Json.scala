@@ -4,8 +4,6 @@ import play.api.libs.iteratee._
 import play.api.libs.iteratee.Input._
 import play.api.libs.json._
 import play.api.mvc.{RequestHeader, BodyParser}
-import play.api.libs.concurrent.Execution.Implicits.defaultContext
-import concurrent.Future
 
 /**
  * Body parser for reactively parsing JSON.  Used with no arguments, it just parses a JsValue into memory.  However,
@@ -254,12 +252,16 @@ object JsonParser {
   /**
    * Creates a JSON object from a key value iteratee
    */
-  def jsonObjectCreator: Iteratee[(String, JsValue), JsObject] = Iteratee.getChunks.map(keyValues => new JsObject(keyValues))
+  def jsonObjectCreator: Iteratee[(String, JsValue), JsObject] =
+    Iteratee.fold[(String, JsValue), List[(String, JsValue)]](Nil)((values, value) => value :: values)
+      .map(keyValues => new JsObject(keyValues.reverse))
 
   /**
    * Creates a JSON array from a key value iteratee
    */
-  def jsonArrayCreator: Iteratee[JsValue, JsArray] = Iteratee.getChunks.map(values => new JsArray(values))
+  def jsonArrayCreator: Iteratee[JsValue, JsArray] =
+    Iteratee.fold[JsValue, List[JsValue]](Nil)((values, value) => value :: values)
+      .map(values => new JsArray(values.reverse))
 
   //
   // JSON parsing

@@ -3,7 +3,7 @@ package play.extras.iteratees
 import org.specs2.mutable._
 
 import play.api.libs.iteratee.{Enumerator, Iteratee}
-import play.api.libs.concurrent.PlayPromise
+import play.libs.F.Promise
 
 /**
  * Add your spec here.
@@ -37,9 +37,14 @@ object EncodingSpec extends Specification {
     }
   }
 
-  def convertBytes(byteArrays: Array[Byte]*) = new String(
-      new PlayPromise(Enumerator(byteArrays:_*) &> Encoding.decode() |>>> Iteratee.consume[Array[Char]]()).await.get
-    )
+  def convertBytes(byteArrays: Array[Byte]*) = {
+    val consumed = Enumerator(byteArrays:_*) &> Encoding.decode() |>>
+      Iteratee.fold[Array[Char], Array[Char]](Array.empty[Char]) { (collected, value) =>
+        collected ++ value
+      }
+
+    new String(consumed.flatMap(_.run).await.get)
+  }
 
   def split(bytes: Array[Byte], pos: Int*): List[Array[Byte]] = {
     pos.toList match {

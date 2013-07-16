@@ -1,10 +1,10 @@
 package play.extras.iteratees
 
 import play.api.libs.iteratee._
-import concurrent.Future
 import play.api.libs.iteratee.Error
 import scala.Some
 import play.api.libs.iteratee.Input.{El, Empty, EOF}
+import play.api.libs.concurrent.Promise
 
 /**
  * Combinators for parsing using iteratees
@@ -15,17 +15,17 @@ object Combinators {
    * it can get the remaining input to pass back in the error.  This makes it more useful for composition.
    */
   def error[A](msg: String) = new Iteratee[Array[Char], A] {
-    def fold[B](folder: (Step[Array[Char], A]) => Future[B]) = {
-      folder(Step.Cont { input =>
-        Error(msg, input)
-      })
+    def fold[B](done: (A, Input[Array[Char]]) => Promise[B],
+                cont: (Input[Array[Char]] => Iteratee[Array[Char], A]) => Promise[B],
+                error : (String, Input[Array[Char]]) => Promise[B]): Promise[B] = {
+      cont(in => Error(msg, in))
     }
   }
 
   /**
    * Done iteratee, typed with Array[Char] to avoid needing to type it ourselves
    */
-  def done[A](a: A) = Done[Array[Char], A](a)
+  def done[A](a: A) = Done[Array[Char], A](a, Input.Empty)
 
   def FailOnEof[E, A](f: E => Iteratee[E, A]): Iteratee[E, A] = Cont {
     case in @ EOF => Error("Premature end of input", in)
@@ -101,14 +101,17 @@ object Combinators {
   }
 
   def peekOne = new Iteratee[Array[Char], Option[Char]] {
-    def fold[B](folder: (Step[Array[Char], Option[Char]]) => Future[B]) = {
-      folder(Step.Cont {
+    self =>
+    def fold[B](done: (Option[Char], Input[Array[Char]]) => Promise[B],
+                cont: (Input[Array[Char]] => Iteratee[Array[Char], Option[Char]]) => Promise[B],
+                error : (String, Input[Array[Char]]) => Promise[B]): Promise[B] = {
+      cont {
         case in @ EOF => Done(None, in)
-        case Empty => this
+        case Empty => self
         case in @ El(data) => {
           data.headOption.map(c => Done(Some(c), in)).getOrElse(this)
         }
-      })
+      }
     }
   }
 
@@ -140,19 +143,21 @@ object Combinators {
           // Increment chunks, chars and lines and capture data
           val nextState = new State(state.chunks + 1, state.chars + data.length, state.lines + data.count(_ == '\n'), data)
           // Fold the input into inner, mapping the input function with our error handler
-          inner.pureFlatFold {
-            case Step.Cont(k) => Cont(step(mapErrors(nextState, k(in)), nextState))
-            case _ => Done(inner, in)
-          }
+          inner.pureFlatFold(
+            (a, e) => Done(inner, in),
+            k => Cont(step(mapErrors(nextState, k(in)), nextState)),
+            (err, e) => Done(inner, in)
+          )
         }
         case Empty => {
           // Increment chunks
           val nextState = new State(state.chunks + 1, state.chars, state.lines, state.data)
           // Fold the input into inner, mapping the input function with our error handler
-          inner.pureFlatFold {
-            case Step.Cont(k) => Cont(step(mapErrors(nextState, k(in)), nextState))
-            case _ => Done(inner, in)
-          }
+          inner.pureFlatFold (
+            (a, e) => Done(inner, in),
+            k => Cont(step(mapErrors(nextState, k(in)), nextState)),
+            (err, e) => Done(inner, in)
+          )
         }
         // Nothing to do for EOF
         case EOF => Done(inner, in)
@@ -163,19 +168,21 @@ object Combinators {
      * An iteratee that wraps another iteratee, handling the errors from that iteratee
      */
     def mapErrors[A](state: State, toMap: Iteratee[Array[Char], A]): Iteratee[Array[Char], A] = new Iteratee[Array[Char], A] {
-      def fold[B](folder: (Step[Array[Char], A]) => Future[B]) = {
-        toMap.fold {
-          // Handle the error before passing it to the folder
-          case Step.Error(msg, remaining) => folder(handleError(state, msg, remaining))
-          // More input? Map this ones errors too
-          case Step.Cont(k) => folder(Step.Cont(in => mapErrors(state, k(in))))
+      def fold[B](done: (A, Input[Array[Char]]) => Promise[B],
+                  cont: (Input[Array[Char]] => Iteratee[Array[Char], A]) => Promise[B],
+                  error : (String, Input[Array[Char]]) => Promise[B]): Promise[B] = {
+        toMap.fold (
           // Done? No errors to map.
-          case s => folder(s)
-        }
+          (a, e) => done(a, e),
+          // More input? Map this ones errors too
+          k => cont(in => mapErrors(state, k(in))),
+          // Handle the error before passing it to the folder
+          (msg, remaining) => error(handleError(state, msg, remaining), remaining)
+        )
       }
     }
 
-    def handleError(state: State, msg: String, remainingInput: Input[Array[Char]]): Step.Error[Array[Char]] = {
+    def handleError(state: State, msg: String, remainingInput: Input[Array[Char]]): String = {
       // Get the remaining input
       val remaining = remainingInput match {
         case El(data) => data
@@ -195,7 +202,7 @@ object Combinators {
         // We have the entire line in our context data, display an error message that includes the column number
         val line = contextData.drop(linePos + 1).takeWhile(_ != '\n')
         val col = errorPos - linePos
-        """
+        return """
           |Error encountered on line %d column %d: %s
           |%s
           |%s^
@@ -203,14 +210,14 @@ object Combinators {
       } else {
         // We don't have the entire line in our context data, don't report the column number as this will confuse
         val line = contextData.takeWhile(_ != '\n')
-        """
+        return """
           |Error encountered on line %d: %s
           |%s
           |%s^
         """.stripMargin.format(lineNo, msg, new String(line),
           new String(line.take(errorPos - 1).map(ch => if (ch == '\t') '\t' else ' ')))
       }
-      Step.Error(newMsg, El(remaining))
+      newMsg
     }
 
     def applyOn[A](inner: Iteratee[Array[Char], A]) = Cont(step(inner))

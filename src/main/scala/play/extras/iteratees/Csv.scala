@@ -34,13 +34,13 @@ object Csv {
   }
 
   def takeOne: Iteratee[Char, Option[Char]] = Cont {
-    case in@Input.El(char) => Done(Some(char))
+    case in@Input.El(char) => Done(Some(char), Input.Empty)
     case in@Input.EOF => Done(None, in)
     case Input.Empty => takeOne
   }
 
   def expect(char: Char): Iteratee[Char, Unit] = takeOne.flatMap {
-    case Some(c) if c == char => Done(Unit)
+    case Some(c) if c == char => Done(Unit, Input.Empty)
     case Some(c) => Error("Expected " + char + " but got " + c, Input.El(c))
     case None => Error("Premature end of input, expected: " + char, Input.EOF)
   }
@@ -54,7 +54,7 @@ object Csv {
     nextChar <- peek
     value <- nextChar match {
       case Some('"') => quoted(value ++ maybeValue :+ '"')
-      case _ => Done[Char, String]((value ++ maybeValue).mkString)
+      case _ => Done[Char, String]((value ++ maybeValue).mkString, Input.Empty)
     }
   } yield value
 
@@ -73,7 +73,7 @@ object Csv {
     _ <- dropSpaces
     nextChar <- takeOne
     values <- nextChar match {
-      case Some('\n') | None => Done[Char, Seq[String]](state :+ value)
+      case Some('\n') | None => Done[Char, Seq[String]](state :+ value, Input.Empty)
       case Some(',') => values(state :+ value)
       case Some(other) => Error("Expected comma, newline or EOF, but found " + other, Input.El(other))
     }

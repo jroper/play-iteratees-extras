@@ -3,7 +3,6 @@ package play.extras.iteratees
 import org.specs2.mutable._
 
 import play.api.libs.iteratee._
-import play.api.libs.concurrent.PlayPromise
 
 object CsvSpec extends Specification {
 
@@ -34,8 +33,10 @@ object CsvSpec extends Specification {
   }
 
   def parseLine(str: String) =
-    new PlayPromise(Enumerator(str.toCharArray:_*) |>>> Csv.values()).await.get
+    (Enumerator(str.toCharArray:_*) |>> Csv.values()).flatMap(_.run).await.get
 
   def parseLines(str: String) =
-    new PlayPromise(Enumerator(str.toCharArray:_*) &> Csv.csvLines |>>> Iteratee.getChunks).await.get
+    (Enumerator(str.toCharArray:_*) &> Csv.csvLines |>> Iteratee.fold[Seq[String], Seq[Seq[String]]](Nil) { (lines, line) =>
+      lines :+ line
+    }).flatMap(_.run).await.get
 }

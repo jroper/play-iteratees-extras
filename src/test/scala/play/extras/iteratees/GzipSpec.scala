@@ -1,8 +1,6 @@
 package play.extras.iteratees
 
-import concurrent.Await
 import play.api.libs.iteratee.{Iteratee, Enumeratee, Enumerator}
-import concurrent.duration.Duration
 import org.specs2.mutable.Specification
 
 object GzipSpec extends Specification {
@@ -43,7 +41,7 @@ object GzipSpec extends Specification {
 
       val valuesBytes = values.map(_.getBytes("utf-8"))
 
-      val result: Array[Byte] = Await.result(Enumerator.enumerate(valuesBytes) &> Gzip.gzip() |>>> Iteratee.consume[Array[Byte]](), Duration.Inf)
+      val result: Array[Byte] = (Enumerator(valuesBytes:_*) &> Gzip.gzip() |>> consumeBytes).flatMap(_.run).await.get
 
       // Check that it exactly matches the gzip output stream
       val baos = new ByteArrayOutputStream()
@@ -63,7 +61,7 @@ object GzipSpec extends Specification {
       // Check that it can be unzipped
       val bais = new ByteArrayInputStream(result)
       val is = new GZIPInputStream(bais)
-      val check: Array[Byte] = Await.result(Enumerator.fromStream(is) |>>> Iteratee.consume[Array[Byte]](), Duration.Inf)
+      val check: Array[Byte] = (Enumerator.fromStream(is) |>> consumeBytes).flatMap(_.run).await.get
       values.mkString("") must_== new String(check, "utf-8")
     }
   }
@@ -95,9 +93,13 @@ object GzipSpec extends Specification {
     }
 
     def test(value: String, gunzip: Enumeratee[Array[Byte], Array[Byte]] = Gzip.gunzip(), gzip: Enumeratee[Array[Byte], Array[Byte]] = Gzip.gzip()) {
-      val future = Enumerator(value.getBytes("utf-8")) &> gzip &> gunzip |>>> Iteratee.consume[Array[Byte]]()
-      val result = new String(Await.result(future, Duration.Inf), "utf-8")
+      val future = (Enumerator(value.getBytes("utf-8")) &> gzip &> gunzip |>> consumeBytes).flatMap(_.run)
+      val result = new String(future.await.get, "utf-8")
       result must_== value
     }
+  }
+
+  val consumeBytes = Iteratee.fold[Array[Byte], Array[Byte]](Array.empty) { (collected, value) =>
+    collected ++ value
   }
 }

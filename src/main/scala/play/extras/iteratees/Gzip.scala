@@ -6,7 +6,6 @@ import java.util.zip._
 import play.api.mvc._
 import play.api.http._
 import org.jboss.netty.handler.codec.http.HttpHeaders.Names
-import play.api.libs.concurrent.Execution.Implicits._
 
 /**
  * Enumeratees for dealing with gzip streams
@@ -74,10 +73,11 @@ object Gzip {
       }
 
       def continue[A](k: K[Bytes, A]) = {
-        feedHeader(k).pureFlatFold {
-          case Step.Cont(k2) => Cont(step(new State, k2))
-          case step => Done(step.it, Input.Empty)
-        }
+        feedHeader(k).pureFlatFold(
+          (a, e) => Done(Done(a, e), Input.Empty),
+          k2 => Cont(step(new State, k2)),
+          (err, e) => Done(Error(err, e), Input.Empty)
+        )
       }
 
       def deflateUntilNeedsInput[A](state: State, k: K[Bytes, A]): Iteratee[Bytes, Iteratee[Bytes, A]] = {
@@ -173,13 +173,13 @@ object Gzip {
           writeTrailer(trailer, 0)
           Seq(buffer, trailer)
         }
-        Iteratee.flatten(Enumerator.enumerate(finalIn) >>> Enumerator.eof |>> Cont(k)).map(it => Done(it, Input.EOF))
+        Iteratee.flatten(Enumerator(finalIn:_*) >>> Enumerator.eof |>> Cont(k)).map(it => Done(it, Input.EOF))
       }
     }
   }
 
   /**
-   * Create a gzip enumeratee.
+   * Create a gunzip enumeratee.
    *
    * This enumeratee is not purely functional, it uses the high performance native deflate implementation provided by
    * Java, which is stateful.  However, this state is created each time the enumeratee is applied, so it is fine to
@@ -286,7 +286,7 @@ object Gzip {
         def continue[B](k: K[Bytes, B]) = Cont(step(state, k))
       } &> k(Input.Empty)
 
-      def done[A](a: A = Unit): Iteratee[Bytes, A] = Done[Bytes, A](a)
+      def done[A](a: A = Unit): Iteratee[Bytes, A] = Done[Bytes, A](a, Input.Empty)
 
       def finish[A](state: State, k: K[Bytes, A], input: Bytes): Iteratee[Bytes, Iteratee[Bytes, A]] = {
         // Get the left over bytes from the inflater
@@ -433,35 +433,44 @@ object Gzip {
  * a content length is set in the response, and it's greater than the configured chunkedThreshold (100kb by default),
  * this filter will instead return a chunked result.
  *
- * You can use this filter in your project simply by including it in the Global filters, like this:
+ * You can use this filter in your project by using it from Global.onRouteRequest, eg:
  *
  * {{{
- * object Global extends WithFilters(new GzipFilter()) {
- *   ...
+ * object Global extends GlobalSettings {
+ *   val gzipFilter = new GzipFilter()
+ *   def onRouteRequest(rh: RequestHeader) = super(rh).map(gzipFilter)
  * }
  * }}}
  *
  * @param gzip The gzip enumeratee to use
  * @param chunkedThreshold The content length threshold, after which the filter will switch to chunking the result
  */
-class GzipFilter(gzip: Enumeratee[Array[Byte], Array[Byte]] = Gzip.gzip(8192), chunkedThreshold: Int = 102400) extends EssentialFilter {
+class GzipFilter(gzip: Enumeratee[Array[Byte], Array[Byte]] = Gzip.gzip(8192), chunkedThreshold: Int = 102400) extends (Handler => Handler) {
 
   /**
    * This allows it to be used from Java
    */
   def this() = this(Gzip.gzip(8192), 102400)
 
-  def apply(next: EssentialAction) = new EssentialAction {
-    def apply(request: RequestHeader) = {
-      if (mayCompress(request)) {
-        next(request).map {
-          case plain: PlainResult => handlePlainResult(plain)
-          case async: AsyncResult => async.transform(handlePlainResult _)
+  def apply(next: Handler) = next match {
+    case a: Action[_] => new Action[a.BODY_CONTENT] {
+      val action: Action[BODY_CONTENT] = a
+
+      def parser = action.parser
+
+      def apply(request: Request[BODY_CONTENT]) = {
+        if (mayCompress(request)) {
+          def handleResult(result: Result): Result = result match {
+            case plain: PlainResult => handlePlainResult(plain)
+            case async: AsyncResult => AsyncResult(async.result.map(handleResult))
+          }
+          handleResult(action(request))
+        } else {
+          action(request)
         }
-      } else {
-        next(request)
       }
     }
+    case other => other
   }
 
   def handlePlainResult(result: PlainResult): PlainResult = result match {
@@ -493,7 +502,7 @@ class GzipFilter(gzip: Enumeratee[Array[Byte], Array[Byte]] = Gzip.gzip(8192), c
    */
   def shouldCompress(header: ResponseHeader) = isAllowedContent(header) && isNotAlreadyCompressed(header) && isNotServerSentEvents(header)
 
-  def isNotServerSentEvents(header: ResponseHeader) = !header.headers.get(Names.CONTENT_TYPE).exists(_ == MimeTypes.EVENT_STREAM)
+  def isNotServerSentEvents(header: ResponseHeader) = !header.headers.get(Names.CONTENT_TYPE).exists(_ == "text/event-stream")
 
   def isAllowedContent(header: ResponseHeader) = header.status != Status.NO_CONTENT && header.status != Status.NOT_MODIFIED
 

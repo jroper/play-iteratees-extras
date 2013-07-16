@@ -3,8 +3,6 @@ package play.extras.iteratees
 import java.nio.charset.{Charset, CharsetDecoder}
 import play.api.libs.iteratee._
 import play.api.libs.iteratee.Input.{El, Empty, EOF}
-import scala.Some
-import scala.Some
 import java.nio.{ByteBuffer, CharBuffer}
 import play.api.libs.iteratee.Input.El
 import scala.Some
@@ -67,10 +65,11 @@ object Encoding {
           val input = if (decoded.length == 0) Empty else El(decoded)
 
           // Fold the input into the iteratee, returning it this function with the new left over state
-          inner.pureFlatFold {
-            case Step.Cont(k) => Cont(step(k(input), leftOver))
-            case _ => Done(inner, Input.Empty)
-          }
+          inner.pureFlatFold(
+            (a, e) => Done(inner, Input.Empty),
+            k => Cont(step(k(input), leftOver)),
+            (err, e) => Done(inner, Input.Empty)
+          )
         }
       }
     }
