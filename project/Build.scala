@@ -5,7 +5,7 @@ object ApplicationBuild extends Build {
 
   val playVersion = "2.0.4"
 
-  val main = Project("iteratees-extras", new File(".")).settings(
+  val main = Project("iteratees-extras_play-2.0", new File(".")).settings(
     libraryDependencies ++= Seq(
       "play" %% "play" % playVersion % "provided",
       "org.specs2" %% "specs2" % "1.12.3" %  "test"
@@ -16,7 +16,7 @@ object ApplicationBuild extends Build {
       else                                   Some("releases"  at nexus + "maven-releases/")
     },
     organization := "com.typesafe.play.extras",
-    version := "1.0.1",
+    version := "1.0.0",
     scalaVersion := "2.9.1"
   )
 
