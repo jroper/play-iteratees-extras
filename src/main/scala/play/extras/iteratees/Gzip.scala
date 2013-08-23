@@ -405,8 +405,7 @@ object Gzip {
  * This filter may gzip the responses for any requests that aren't HEAD requests and specify an accept encoding of gzip.
  *
  * It will only gzip non chunked responses.  Chunked responses are often comet responses, gzipping will interfere in
- * that case.  If you want to gzip a chunked response, you can apply the gzip enumeratee manually to the enumerator,
- * it's not hard.
+ * that case.  If you want to gzip a chunked response, you can apply the gzip enumeratee manually to the enumerator.
  *
  * For non chunked responses, it won't gzip under the following conditions:
  *
@@ -414,11 +413,14 @@ object Gzip {
  * long)
  * - The response already defines a Content-Encoding header
  * - The response content type is text/event-stream
+ * - A custom shouldGzip function is supplied and it returns false
  *
- * The filter cannot know the content length of its gzipped response, so it will never send it.  Play handles this by
- * buffering the response to find out the content length.  For large files this obviously will cause a problem, so if
- * a content length is set in the response, and it's greater than the configured chunkedThreshold (100kb by default),
- * this filter will instead return a chunked result.
+ * Since gzipping changes the content length of the response, this filter may do some buffering.  If a content length
+ * is sent by the action, that content length is filtered out and ignored.  If the connection flag on the result is
+ * Close, the filter will not attempt to buffer, and will simply rely on the closing the response to signify the end
+ * of the response.  Otherwise, it will buffer up to the configured chunkedThreshold, which defaults to 100kb.  If the
+ * response fits in that buffer, the filter will send the content length, otherwise it falls back to sending a chunked
+ * response, or if the protocol is HTTP/1.0, it closes the connection at the end of the response.
  *
  * You can use this filter in your project simply by including it in the Global filters, like this:
  *
@@ -428,17 +430,21 @@ object Gzip {
  * }
  * }}}
  *
- * @param gzip The gzip enumeratee to use
- * @param chunkedThreshold The content length threshold, after which the filter will switch to chunking the result
+ * @param gzip The gzip enumeratee to use.
+ * @param chunkedThreshold The content length threshold, after which the filter will switch to chunking the result.
+ * @param shouldGzip Whether the given request/result should be gzipped.  This can be used, for example, to implement
+ *                   black/white lists for gzipping by content type.
  */
-class GzipFilter(gzip: Enumeratee[Array[Byte], Array[Byte]] = Gzip.gzip(8192), chunkedThreshold: Int = 102400) extends EssentialFilter {
+class GzipFilter(gzip: Enumeratee[Array[Byte], Array[Byte]] = Gzip.gzip(8192),
+                 chunkedThreshold: Int = 102400,
+                 shouldGzip: (RequestHeader, ResponseHeader) => Boolean = (_, _) => true) extends EssentialFilter {
 
   import play.api.http.HeaderNames._
 
   /**
    * This allows it to be used from Java
    */
-  def this() = this(Gzip.gzip(8192), 102400)
+  def this() = this(Gzip.gzip(8192), 102400, (_, _) => true)
 
   def apply(next: EssentialAction) = new EssentialAction {
     def apply(request: RequestHeader) = {
@@ -451,7 +457,7 @@ class GzipFilter(gzip: Enumeratee[Array[Byte], Array[Byte]] = Gzip.gzip(8192), c
   }
 
   def handleResult(request: RequestHeader, result: SimpleResult): Future[SimpleResult] = {
-    if (shouldCompress(result.header)) {
+    if (shouldCompress(result.header) && shouldGzip(request, result.header)) {
       // If connection is close, don't bother buffering it, we can send it without a content length
       if (result.connection == HttpConnection.Close) {
         Future.successful(SimpleResult(
