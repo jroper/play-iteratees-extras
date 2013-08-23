@@ -1,10 +1,11 @@
 package play.extras.iteratees
 
 import play.api.libs.iteratee._
-import concurrent.Future
+import scala.concurrent.{ExecutionContext, Future}
 import play.api.libs.iteratee.Error
 import scala.Some
 import play.api.libs.iteratee.Input.{El, Empty, EOF}
+import play.api.libs.concurrent.Execution.Implicits._
 
 /**
  * Combinators for parsing using iteratees
@@ -14,13 +15,7 @@ object Combinators {
    * Error iteratee.  Differs from Iteratees Error iteratee in that initially this one is in the cont state, so that
    * it can get the remaining input to pass back in the error.  This makes it more useful for composition.
    */
-  def error[A](msg: String) = new Iteratee[Array[Char], A] {
-    def fold[B](folder: (Step[Array[Char], A]) => Future[B]) = {
-      folder(Step.Cont { input =>
-        Error(msg, input)
-      })
-    }
-  }
+  def error[A](msg: String) = Cont[Array[Char], A](input => Error(msg, input))
 
   /**
    * Done iteratee, typed with Array[Char] to avoid needing to type it ourselves
@@ -100,15 +95,11 @@ object Combinators {
     data.headOption.map(c => Done(c, El(data.drop(1)))).getOrElse(takeOne(expected))
   }
 
-  def peekOne = new Iteratee[Array[Char], Option[Char]] {
-    def fold[B](folder: (Step[Array[Char], Option[Char]]) => Future[B]) = {
-      folder(Step.Cont {
-        case in @ EOF => Done(None, in)
-        case Empty => this
-        case in @ El(data) => {
-          data.headOption.map(c => Done(Some(c), in)).getOrElse(this)
-        }
-      })
+  val peekOne: Iteratee[Array[Char], Option[Char]] = Cont {
+    case in @ EOF => Done(None, in)
+    case Empty => peekOne
+    case in @ El(data) => {
+      data.headOption.map(c => Done(Some(c), in)).getOrElse(peekOne)
     }
   }
 
@@ -163,7 +154,7 @@ object Combinators {
      * An iteratee that wraps another iteratee, handling the errors from that iteratee
      */
     def mapErrors[A](state: State, toMap: Iteratee[Array[Char], A]): Iteratee[Array[Char], A] = new Iteratee[Array[Char], A] {
-      def fold[B](folder: (Step[Array[Char], A]) => Future[B]) = {
+      def fold[B](folder: (Step[Array[Char], A]) => Future[B])(implicit ec: ExecutionContext) = {
         toMap.fold {
           // Handle the error before passing it to the folder
           case Step.Error(msg, remaining) => folder(handleError(state, msg, remaining))
@@ -171,7 +162,7 @@ object Combinators {
           case Step.Cont(k) => folder(Step.Cont(in => mapErrors(state, k(in))))
           // Done? No errors to map.
           case s => folder(s)
-        }
+        }(ec)
       }
     }
 

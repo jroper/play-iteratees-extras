@@ -5,7 +5,6 @@ import play.api.libs.iteratee.Input._
 import play.api.libs.json._
 import play.api.mvc.{RequestHeader, BodyParser}
 import play.api.libs.concurrent.Execution.Implicits.defaultContext
-import concurrent.Future
 
 /**
  * Body parser for reactively parsing JSON.  Used with no arguments, it just parses a JsValue into memory.  However,
@@ -331,7 +330,7 @@ object JsonParser {
     }
   } yield values
 
-  def jsonValue: Iteratee[Array[Char], JsValue] = peekOne.flatMap({
+  def jsonValue: Iteratee[Array[Char], JsValue] = peekOne.flatMap {
     case Some('"') => jsonString
     case Some('{') => jsonObject()
     case Some('[') => jsonArray()
@@ -340,7 +339,7 @@ object JsonParser {
     case Some('n') => jsonNull
     case Some(c) => error("Expected JSON value, but found: " + c)
     case None => error("Expected JSON value, but found EOF")
-  })
+  }
 
   def jsonNumber = for {
     number <- peekWhile(ch => ch.isDigit || ch == '+' || ch == '-' || ch == '.' || ch == 'e' || ch == 'E')

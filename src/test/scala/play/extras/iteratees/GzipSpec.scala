@@ -4,6 +4,7 @@ import concurrent.Await
 import play.api.libs.iteratee.{Iteratee, Enumeratee, Enumerator}
 import concurrent.duration.Duration
 import org.specs2.mutable.Specification
+import scala.concurrent.ExecutionContext.Implicits._
 
 object GzipSpec extends Specification {
 

@@ -1,6 +1,7 @@
 package play.extras.iteratees
 
 import play.api.libs.iteratee._
+import play.api.libs.concurrent.Execution.Implicits._
 
 /**
  * CSV iteratee.  Since it only works on one char at a time, it's not really useful.  But it's great for learning or

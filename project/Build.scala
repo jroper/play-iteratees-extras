@@ -3,11 +3,11 @@ import Keys._
 
 object ApplicationBuild extends Build {
 
-  val playVersion = "2.1.0"
+  val playVersion = "2.2-SNAPSHOT"
 
   val main = Project("iteratees-extras", new File(".")).settings(
     libraryDependencies ++= Seq(
-      "play" %% "play" % playVersion % "provided",
+      "com.typesafe.play" %% "play" % playVersion % "provided",
       "org.specs2" %% "specs2" % "1.12.3" %  "test"
     ),
     publishTo <<= (version) { version: String =>
@@ -16,8 +16,8 @@ object ApplicationBuild extends Build {
       else                                   Some("releases"  at nexus + "maven-releases/")
     },
     organization := "com.typesafe.play.extras",
-    version := "1.0.1",
-    scalaVersion := "2.10.0"
+    version := "1.1.0",
+    scalaVersion := "2.10.2"
   )
 
 }

@@ -7,6 +7,7 @@ import play.api.mvc._
 import play.api.http._
 import org.jboss.netty.handler.codec.http.HttpHeaders.Names
 import play.api.libs.concurrent.Execution.Implicits._
+import scala.concurrent._
 
 /**
  * Enumeratees for dealing with gzip streams
@@ -29,13 +30,8 @@ object Gzip {
    * reuse the enumeratee returned by this function.
    *
    * @param bufferSize The size of the output buffer
-   * @param reuseBuffer Whether the buffer can be reused.  This may help performance, however, only use it if you are
-   *                    sure that the iteratee that you'll be feeding to will do something with its input immediately,
-   *                    and not just hold a reference to it.  For example, Iteratees.conusume will just hold a
-   *                    reference.  Streams however won't just hold a reference, they'll write out the entire buffer
-   *                    before returning control to the iteratee.
    */
-  def gzip(bufferSize: Int = 512, reuseBuffer: Boolean = false): Enumeratee[Array[Byte], Array[Byte]] = {
+  def gzip(bufferSize: Int = 512): Enumeratee[Array[Byte], Array[Byte]] = {
 
     /*
      * State consists of 4 parts, a deflater (high performance native zlib implementation), a crc32 calculator, required
@@ -50,9 +46,7 @@ object Gzip {
 
       def reset() {
         pos = 0
-        if (!reuseBuffer) {
-          buffer = new Bytes(bufferSize)
-        }
+        buffer = new Bytes(bufferSize)
       }
     }
 
@@ -186,13 +180,8 @@ object Gzip {
    * reuse the enumeratee returned by this function.
    *
    * @param bufferSize The size of the output buffer
-   * @param reuseBuffer Whether the buffer can be reused.  This may help performance, however, only use it if you are
-   *                    sure that the iteratee that you'll be feeding to will do something with its input immediately,
-   *                    and not just hold a reference to it.  For example, Iteratees.conusume will just hold a
-   *                    reference.  Streams however won't just hold a reference, they'll write out the entire buffer
-   *                    before returning control to the iteratee.
    */
-  def gunzip(bufferSize: Int = 512, reuseBuffer: Boolean = false): Enumeratee[Array[Byte], Array[Byte]] = {
+  def gunzip(bufferSize: Int = 512): Enumeratee[Array[Byte], Array[Byte]] = {
 
     /*
      * State consists of 4 parts, an inflater (high performance native zlib implementation), a crc32 calculator, required
@@ -207,9 +196,7 @@ object Gzip {
 
       def reset() {
         pos = 0
-        if (!reuseBuffer) {
-          buffer = new Bytes(bufferSize)
-        }
+        buffer = new Bytes(bufferSize)
       }
     }
 
@@ -446,6 +433,8 @@ object Gzip {
  */
 class GzipFilter(gzip: Enumeratee[Array[Byte], Array[Byte]] = Gzip.gzip(8192), chunkedThreshold: Int = 102400) extends EssentialFilter {
 
+  import play.api.http.HeaderNames._
+
   /**
    * This allows it to be used from Java
    */
@@ -454,31 +443,70 @@ class GzipFilter(gzip: Enumeratee[Array[Byte], Array[Byte]] = Gzip.gzip(8192), c
   def apply(next: EssentialAction) = new EssentialAction {
     def apply(request: RequestHeader) = {
       if (mayCompress(request)) {
-        next(request).map {
-          case plain: PlainResult => handlePlainResult(plain)
-          case async: AsyncResult => async.transform(handlePlainResult _)
-        }
+        next(request).mapM(result => handleResult(request, result))
       } else {
         next(request)
       }
     }
   }
 
-  def handlePlainResult(result: PlainResult): PlainResult = result match {
-    case simple @ SimpleResult(header, body) => {
-      if (shouldCompress(header)) {
-        if (header.headers.get(Names.CONTENT_LENGTH).filter(_ != "-1").filter(_.toInt >= chunkedThreshold).isDefined) {
-          // Switch to a chunked result, so that Play doesn't attempt to buffer in memory
-          ChunkedResult(createHeader(header), (it: Iteratee[Array[Byte], Unit]) => body &> writeableEnumeratee(simple.writeable) &> gzip |>> it)
-        } else {
-          SimpleResult(createHeader(header), body &> writeableEnumeratee(simple.writeable) &> gzip)
-        }
+  def handleResult(request: RequestHeader, result: SimpleResult): Future[SimpleResult] = {
+    if (shouldCompress(result.header)) {
+      // If connection is close, don't bother buffering it, we can send it without a content length
+      if (result.connection == HttpConnection.Close) {
+        Future.successful(SimpleResult(
+          header = result.header.copy(headers = setupHeader(result.header.headers)),
+          body = result.body &> gzip,
+          connection = result.connection
+        ))
       } else {
-        result
+
+        // Attempt to buffer it
+        // left means we didn't buffer the whole thing before reaching the threshold, and contains the chunks that we did buffer
+        // right means we did buffer it before reaching the threshold, and contains the chunks and the length of data
+        def buffer(chunks: List[Array[Byte]], count: Int): Iteratee[Array[Byte], Either[List[Array[Byte]], (List[Array[Byte]], Int)]] = {
+          Cont {
+            case Input.EOF => Done(Right((chunks.reverse, count)))
+            case Input.El(data) if count + data.length < chunkedThreshold || count == 0 => buffer(data :: chunks, count + data.length)
+            case Input.El(data) => Done(Left((data :: chunks).reverse))
+            case Input.Empty => buffer(chunks, count)
+          }
+        }
+
+        // Run the enumerator partially (means we get an enumerator that contains the rest of the input)
+        Concurrent.runPartial(result.body &> gzip, buffer(Nil, 0)).map {
+          // We successfully buffered the whole thing, so we have a content length
+          case (Right((chunks, contentLength)), _) =>
+            SimpleResult(
+              header = result.header.copy(headers = setupHeader(result.header.headers)
+                + (CONTENT_LENGTH -> Integer.toString(contentLength))),
+              body = Enumerator.enumerate(chunks),
+              connection = result.connection
+            )
+          // We still had some input remaining
+          case (Left(chunks), remaining) => {
+            if (request.version == "HTTP/1.0") {
+              // Don't chunk for HTTP/1.0
+              SimpleResult(
+                header = result.header.copy(headers = setupHeader(result.header.headers)),
+                body = Enumerator.enumerate(chunks) >>> remaining,
+                connection = HttpConnection.Close
+              )
+            } else {
+              // Otherwise chunk
+              SimpleResult(
+                header =  result.header.copy(headers = setupHeader(result.header.headers)
+                  + (TRANSFER_ENCODING -> CHUNKED)),
+                body = (Enumerator.enumerate(chunks) >>> remaining) &> Results.chunk,
+                connection = result.connection
+              )
+            }
+          }
+        }
       }
+    } else {
+      Future.successful(result)
     }
-    // Don't even both trying to compress chunked result, it's likely some sort of comet thing.
-    case c: ChunkedResult[_] => c
   }
 
   /**
@@ -489,24 +517,37 @@ class GzipFilter(gzip: Enumeratee[Array[Byte], Array[Byte]] = Gzip.gzip(8192), c
 
   /**
    * Whether this response should be compressed.  Responses that may not contain content won't be compressed, nor will
-   * responses that already define a content encoding, and server sent event response will not be compressed.
+   * responses that already define a content encoding, server sent event responses will not be compressed, and chunked
+   * responses won't be compressed.
    */
-  def shouldCompress(header: ResponseHeader) = isAllowedContent(header) && isNotAlreadyCompressed(header) && isNotServerSentEvents(header)
+  def shouldCompress(header: ResponseHeader) = isAllowedContent(header) &&
+    isNotAlreadyCompressed(header) &&
+    isNotServerSentEvents(header) &&
+    isNotChunked(header)
 
-  def isNotServerSentEvents(header: ResponseHeader) = !header.headers.get(Names.CONTENT_TYPE).exists(_ == MimeTypes.EVENT_STREAM)
+  /**
+   * We don't compress chunked responses because this is often used for comet events, and because we would have to
+   * dechunk them first if we did.
+   */
+  def isNotChunked(header: ResponseHeader) = !header.headers(TRANSFER_ENCODING).exists(_ == CHUNKED)
 
+  /**
+   * We don't compress server sent events because these must be pushed immediately, and compressing buffers.
+   */
+  def isNotServerSentEvents(header: ResponseHeader) = !header.headers.get(CONTENT_TYPE).exists(_ == MimeTypes.EVENT_STREAM)
+
+  /**
+   * Certain response codes are forbidden by the HTTP spec to contain content, but a gzipped response always contains
+   * a minimum of 20 bytes, even for empty responses.
+   */
   def isAllowedContent(header: ResponseHeader) = header.status != Status.NO_CONTENT && header.status != Status.NOT_MODIFIED
 
+  /**
+   * Of course, we don't want to double compress responses
+   */
   def isNotAlreadyCompressed(header: ResponseHeader) = header.headers.get(Names.CONTENT_ENCODING).isEmpty
 
-  def createHeader(header: ResponseHeader): ResponseHeader = {
-    // Only allow content length if it's -1 (meaning, a stream that will only terminate by closing the connection)
-    val withoutContentLength = header.headers.get(Names.CONTENT_LENGTH)
-      .filter(_ != "-1")
-      .map(h => header.headers - Names.CONTENT_LENGTH)
-      .getOrElse(header.headers)
-    header.copy(headers = withoutContentLength + (Names.CONTENT_ENCODING -> "gzip") + (Names.VARY -> Names.ACCEPT_ENCODING))
+  def setupHeader(header: Map[String, String]): Map[String, String] = {
+    header.filter(_._1 == Names.CONTENT_LENGTH) + (Names.CONTENT_ENCODING -> "gzip") + (Names.VARY -> Names.ACCEPT_ENCODING)
   }
-
-  def writeableEnumeratee[A](writeable: Writeable[A]): Enumeratee[A, Array[Byte]] = Enumeratee.map(a => writeable.transform(a))
 }
