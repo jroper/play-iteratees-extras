@@ -440,6 +440,7 @@ class GzipFilter(gzip: Enumeratee[Array[Byte], Array[Byte]] = Gzip.gzip(8192),
                  shouldGzip: (RequestHeader, ResponseHeader) => Boolean = (_, _) => true) extends EssentialFilter {
 
   import play.api.http.HeaderNames._
+  import play.api.http.HttpProtocol._
 
   /**
    * This allows it to be used from Java

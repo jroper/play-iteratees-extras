@@ -3,7 +3,7 @@ import Keys._
 
 object ApplicationBuild extends Build {
 
-  val playVersion = "2.2-SNAPSHOT"
+  val playVersion = "2.2.0"
 
   val main = Project("iteratees-extras", new File(".")).settings(
     libraryDependencies ++= Seq(
@@ -11,7 +11,7 @@ object ApplicationBuild extends Build {
       "org.specs2" %% "specs2" % "1.12.3" %  "test"
     ),
     publishTo <<= (version) { version: String =>
-      val nexus = "http://typesafe.artifactoryonline.com/typesafe/"
+      val nexus = "https://private-repo.typesafe.com/typesafe/"
       if (version.trim.endsWith("SNAPSHOT")) Some("snapshots" at nexus + "maven-snapshots/")
       else                                   Some("releases"  at nexus + "maven-releases/")
     },
