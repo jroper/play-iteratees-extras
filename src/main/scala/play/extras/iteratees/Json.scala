@@ -2,9 +2,10 @@ package play.extras.iteratees
 
 import play.api.libs.iteratee._
 import play.api.libs.iteratee.Input._
+import play.api.libs.iteratee.Execution.Implicits.trampoline
 import play.api.libs.json._
 import play.api.mvc.{RequestHeader, BodyParser}
-import play.api.libs.concurrent.Execution.Implicits.defaultContext
+import scala.concurrent.{Future, ExecutionContext}
 
 /**
  * Body parser for reactively parsing JSON.  Used with no arguments, it just parses a JsValue into memory.  However,
@@ -196,14 +197,14 @@ object JsonEnumeratees {
    *
    * @param valueParser   A function that returns an iteratee to parse the value for a given key.
    */
-  def jsObject[V](valueParser: String => Iteratee[Array[Char], V]) = new Enumeratee[Array[Char], V] {
+  def jsObject[V](valueParser: String => Iteratee[Array[Char], V])(implicit ec: ExecutionContext) = new Enumeratee[Array[Char], V] {
     def step[A](inner: Iteratee[V, A])(in: Input[V]): Iteratee[V, Iteratee[V, A]] = in match {
       case EOF => Done(inner, in)
       case _ => Cont(step(Iteratee.flatten(inner.feed(in))))
     }
 
     def applyOn[A](inner: Iteratee[V, A]): Iteratee[Array[Char], Iteratee[V, A]] = {
-      jsonObject(Cont(step(inner)), valueParser)
+      jsonObject(Cont(step(inner)), valueParser)(ec)
     }
   }
 
@@ -231,7 +232,7 @@ object JsonEnumeratees {
    *
    * @param valueParser   A function that returns an iteratee to parse the value for a array index.
    */
-  def jsArray[V](valueParser: Int => Iteratee[Array[Char], V]) = new Enumeratee[Array[Char], V] {
+  def jsArray[V](valueParser: Int => Iteratee[Array[Char], V])(implicit ec: ExecutionContext) = new Enumeratee[Array[Char], V] {
     def step[A](inner: Iteratee[V, A])(in: Input[V]): Iteratee[V, Iteratee[V, A]] = in match {
       case EOF => Done(inner, in)
       case _ => {
@@ -240,7 +241,7 @@ object JsonEnumeratees {
     }
 
     def applyOn[A](inner: Iteratee[V, A]): Iteratee[Array[Char], Iteratee[V, A]] = {
-      jsonArray(Cont(step(inner)), valueParser)
+      jsonArray(Cont(step(inner)), valueParser)(ec)
     }
   }
 
@@ -264,7 +265,10 @@ object JsonParser {
   // JSON parsing
   //
 
-  def jsonKeyValue[A](valueHandler: String => Iteratee[Array[Char], A]) = for {
+  private def jsonKeyValue[A](valueHandler: String => Iteratee[Array[Char], A])(implicit ec: ExecutionContext) =
+    jsonKeyValueImpl(withExecutor(valueHandler)(ec))
+
+  private def jsonKeyValueImpl[A](valueHandler: String => Iteratee[Array[Char], A]) = for {
     key <- jsonString
     _ <- skipWhitespace
     _ <- expect(':')
@@ -276,19 +280,29 @@ object JsonParser {
 
   def jsonKeyValues[A, V](keyValuesHandler: Iteratee[V, A],
                            valueHandler: String => Iteratee[Array[Char], V]
-                            ): Iteratee[Array[Char], A] = for {
+                            )(implicit ec: ExecutionContext) = jsonKeyValuesImpl(keyValuesHandler, withExecutor(valueHandler)(ec))
+
+  private def jsonKeyValuesImpl[A, V](keyValuesHandler: Iteratee[V, A],
+                                      valueHandler: String => Iteratee[Array[Char], V]): Iteratee[Array[Char], A] = for {
     _ <- skipWhitespace
-    fed <- jsonKeyValue(valueHandler).map(keyValue => Iteratee.flatten(keyValuesHandler.feed(El(keyValue))))
+    fed <- jsonKeyValueImpl(valueHandler).map(keyValue => Iteratee.flatten(keyValuesHandler.feed(El(keyValue))))
     _ <- skipWhitespace
     ch <- takeOneOf('}', ',')
     keyValues <- ch match {
       case '}' => Iteratee.flatten(fed.run.map((a: A) => done(a)))
-      case ',' => jsonKeyValues(fed, valueHandler)
+      case ',' => jsonKeyValuesImpl(fed, valueHandler)
     }
   } yield keyValues
 
 
+  def jsonObject: Iteratee[Array[Char], JsObject] = jsonObject()
+
   def jsonObject[A, V](keyValuesHandler: Iteratee[V, A] = jsonObjectCreator,
+                       valueHandler: String => Iteratee[Array[Char], V] = (key: String) => jsonValue.map(value => (key, value))(trampoline)
+                        )(implicit ec: ExecutionContext): Iteratee[Array[Char], A] =
+    jsonObjectImpl(keyValuesHandler, withExecutor(valueHandler)(ec))
+
+  private def jsonObjectImpl[A, V](keyValuesHandler: Iteratee[V, A] = jsonObjectCreator,
                        valueHandler: String => Iteratee[Array[Char], V] = (key: String) => jsonValue.map(value => (key, value))
                         ) = for {
     _ <- expect('{')
@@ -296,13 +310,18 @@ object JsonParser {
     ch <- peekOne
     keyValues <- ch match {
       case Some('}') => drop(1).flatMap(_ => Iteratee.flatten(keyValuesHandler.run.map((a: A) => done(a))))
-      case _ => jsonKeyValues(keyValuesHandler, valueHandler)
+      case _ => jsonKeyValuesImpl(keyValuesHandler, valueHandler)
     }
   } yield keyValues
 
   def jsonValueForEach: Int => Iteratee[Array[Char], JsValue] = index => jsonValue
 
   def jsonArrayValues[A, V](valuesHandler: Iteratee[V, A],
+                            valueHandler: Int => Iteratee[Array[Char], V],
+                            index: Int = 0)(implicit ec: ExecutionContext): Iteratee[Array[Char], A] =
+    jsonArrayValuesImpl(valuesHandler, withExecutor(valueHandler)(ec), index)
+
+  private def jsonArrayValuesImpl[A, V](valuesHandler: Iteratee[V, A],
                             valueHandler: Int => Iteratee[Array[Char], V],
                             index: Int = 0): Iteratee[Array[Char], A] = for {
     _ <- skipWhitespace
@@ -311,12 +330,19 @@ object JsonParser {
     ch <- takeOneOf(']', ',')
     values <- ch match {
       case ']' => Iteratee.flatten(fed.run.map((a: A) => done(a)))
-      case ',' => jsonArrayValues(fed, valueHandler, index + 1)
+      case ',' => jsonArrayValuesImpl(fed, valueHandler, index + 1)
     }
   } yield values
 
 
+  def jsonArray: Iteratee[Array[Char], JsArray] = jsonArray()
+
   def jsonArray[A, V](valuesHandler: Iteratee[V, A] = jsonArrayCreator,
+                      valueHandler: Int => Iteratee[Array[Char], V] = jsonValueForEach
+                       )(implicit ec: ExecutionContext): Iteratee[Array[Char], A] =
+    jsonArrayImpl(valuesHandler, withExecutor(valueHandler)(ec))
+
+  private def jsonArrayImpl[A, V](valuesHandler: Iteratee[V, A] = jsonArrayCreator,
                       valueHandler: Int => Iteratee[Array[Char], V] = jsonValueForEach) = for {
     _ <- expect('[')
     _ <- skipWhitespace
@@ -326,14 +352,14 @@ object JsonParser {
         _ <- drop(1)
         empty <- Iteratee.flatten(valuesHandler.run.map((a: A) => done(a)))
       } yield empty
-      case _ => jsonArrayValues(valuesHandler, valueHandler)
+      case _ => jsonArrayValuesImpl(valuesHandler, valueHandler)
     }
   } yield values
 
   def jsonValue: Iteratee[Array[Char], JsValue] = peekOne.flatMap {
     case Some('"') => jsonString
-    case Some('{') => jsonObject()
-    case Some('[') => jsonArray()
+    case Some('{') => jsonObject
+    case Some('[') => jsonArray
     case Some(n) if (n == '-' || (n >= '0' && n <= '9')) => jsonNumber
     case Some('f') | Some('t') => jsonBoolean
     case Some('n') => jsonNull
@@ -465,5 +491,9 @@ object JsonParser {
       _ <- expect('"')
       data <- stringContents()
     } yield new JsString(data)
+  }
+
+  private def withExecutor[T, I, A](f: T => Iteratee[I, A])(implicit ec: ExecutionContext): T => Iteratee[I, A] = {
+    (t: T) => Iteratee.flatten(Future(f(t))(ec))
   }
 }

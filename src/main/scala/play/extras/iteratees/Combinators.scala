@@ -5,10 +5,13 @@ import scala.concurrent.{ExecutionContext, Future}
 import play.api.libs.iteratee.Error
 import scala.Some
 import play.api.libs.iteratee.Input.{El, Empty, EOF}
-import play.api.libs.concurrent.Execution.Implicits._
+import play.api.libs.iteratee.Execution.Implicits.trampoline
 
 /**
- * Combinators for parsing using iteratees
+ * Combinators for parsing using iteratees.
+ *
+ * Note that all the combinators that take callbacks execute them in the same thread that invokes the iteratee.
+ * This means it is important that none of the callbacks ever block.
  */
 object Combinators {
   /**

@@ -4,7 +4,7 @@ import java.nio.charset.{Charset, CharsetDecoder}
 import play.api.libs.iteratee._
 import play.api.libs.iteratee.Input.{El, Empty, EOF}
 import java.nio.{ByteBuffer, CharBuffer}
-import play.api.libs.concurrent.Execution.Implicits._
+import play.api.libs.iteratee.Execution.Implicits.trampoline
 
 /**
  * Enumeratees for dealing with character encoding
