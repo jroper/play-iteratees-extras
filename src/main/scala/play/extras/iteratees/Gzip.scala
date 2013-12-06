@@ -536,7 +536,7 @@ class GzipFilter(gzip: Enumeratee[Array[Byte], Array[Byte]] = Gzip.gzip(8192),
    * We don't compress chunked responses because this is often used for comet events, and because we would have to
    * dechunk them first if we did.
    */
-  def isNotChunked(header: ResponseHeader) = !header.headers(TRANSFER_ENCODING).exists(_ == CHUNKED)
+  def isNotChunked(header: ResponseHeader) = !header.headers.get(TRANSFER_ENCODING).exists(_ == CHUNKED)
 
   /**
    * We don't compress server sent events because these must be pushed immediately, and compressing buffers.

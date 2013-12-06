@@ -5,6 +5,9 @@ import play.api.libs.iteratee.{Iteratee, Enumeratee, Enumerator}
 import concurrent.duration.Duration
 import org.specs2.mutable.Specification
 import scala.concurrent.ExecutionContext.Implicits._
+import play.api.mvc.ResponseHeader
+import play.api.http.{HttpProtocol, HeaderNames}
+import play.mvc.Http.Status
 
 object GzipSpec extends Specification {
 
@@ -99,6 +102,19 @@ object GzipSpec extends Specification {
       val future = Enumerator(value.getBytes("utf-8")) &> gzip &> gunzip |>>> Iteratee.consume[Array[Byte]]()
       val result = new String(Await.result(future, Duration.Inf), "utf-8")
       result must_== value
+    }
+  }
+
+  "GzipFilter.isNotChunked" should {
+    "should return false if not chunked" in {
+      val filter = new GzipFilter()
+      filter.isNotChunked(ResponseHeader(Status.OK)) must beTrue
+    }
+    "should return true if chunked" in {
+      val filter = new GzipFilter()
+      val headers = Map((HeaderNames.TRANSFER_ENCODING, HttpProtocol.CHUNKED))
+
+      filter.isNotChunked(ResponseHeader(Status.OK, headers)) must beFalse
     }
   }
 }
