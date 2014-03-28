@@ -305,13 +305,15 @@ object JsonParser {
   private def jsonObjectImpl[A, V](keyValuesHandler: Iteratee[V, A] = jsonObjectCreator,
                        valueHandler: String => Iteratee[Array[Char], V] = (key: String) => jsonValue.map(value => (key, value))
                         ) = for {
+    _ <- skipWhitespace
     _ <- expect('{')
-    - <- skipWhitespace
+    _ <- skipWhitespace
     ch <- peekOne
     keyValues <- ch match {
       case Some('}') => drop(1).flatMap(_ => Iteratee.flatten(keyValuesHandler.run.map((a: A) => done(a))))
       case _ => jsonKeyValuesImpl(keyValuesHandler, valueHandler)
     }
+    _ <- skipWhitespace   // skip all whitespaces after a object has been parsed since the next object might be separated by some whitespace/newline
   } yield keyValues
 
   def jsonValueForEach: Int => Iteratee[Array[Char], JsValue] = index => jsonValue
@@ -332,6 +334,7 @@ object JsonParser {
       case ']' => Iteratee.flatten(fed.run.map((a: A) => done(a)))
       case ',' => jsonArrayValuesImpl(fed, valueHandler, index + 1)
     }
+    _ <- skipWhitespace
   } yield values
 
 
@@ -344,6 +347,7 @@ object JsonParser {
 
   private def jsonArrayImpl[A, V](valuesHandler: Iteratee[V, A] = jsonArrayCreator,
                       valueHandler: Int => Iteratee[Array[Char], V] = jsonValueForEach) = for {
+    _ <- skipWhitespace
     _ <- expect('[')
     _ <- skipWhitespace
     ch <- peekOne
@@ -354,6 +358,7 @@ object JsonParser {
       } yield empty
       case _ => jsonArrayValuesImpl(valuesHandler, valueHandler)
     }
+    _ <- skipWhitespace
   } yield values
 
   def jsonValue: Iteratee[Array[Char], JsValue] = peekOne.flatMap {

@@ -37,11 +37,12 @@ object Combinators {
     ch <- peekOne
     result <- ch match {
       case Some(c) if c == value => done(Unit)
-      case Some(c) => error("Expected '" + value + "' but got '" + c + "'")
+      case Some(c) => error("Expected '" + value + "' but got '"+ c +"' / chr(" + c.toInt + ")")
       case None => error("Premature end of input, expected '" + value + "'")
     }
     _ <- drop(1)
   } yield result
+
 
   def drop(n: Int): Iteratee[Array[Char], Unit] = Cont {
     case in @ EOF => Done(Unit, in)
