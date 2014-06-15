@@ -16,7 +16,7 @@ object ApplicationBuild extends Build {
       else                                   Some("releases"  at nexus + "maven-releases/")
     },
     organization := "com.typesafe.play.extras",
-    version := "1.4.0-SNAPSHOT",
+    version := "1.4.0",
     scalaVersion := "2.11.1",
     crossScalaVersions := Seq("2.11.1", "2.10.4")
   )
