@@ -17,16 +17,16 @@ object Encoding {
    *
    * @param decoder The decoder to use.  Defaults to a UTF-8 decoder
    */
-  def decode(decoder: CharsetDecoder = Charset.forName("UTF-8").newDecoder()): Enumeratee[Array[Byte], Array[Char]] = new Enumeratee[Array[Byte],Array[Char]] {
+  def decode(decoder: CharsetDecoder = Charset.forName("UTF-8").newDecoder()): Enumeratee[Array[Byte], CharString] = new Enumeratee[Array[Byte],CharString] {
     /**
      * We carry partialChar as state from the stream
      */
-    def step[A](inner: Iteratee[Array[Char], A], partialChar: Option[Array[Byte]] = None)(in: Input[Array[Byte]]): Iteratee[Array[Byte], Iteratee[Array[Char], A]] = {
+    def step[A](inner: Iteratee[CharString, A], partialChar: Option[Array[Byte]] = None)(in: Input[Array[Byte]]): Iteratee[Array[Byte], Iteratee[CharString, A]] = {
       in match {
         // We've reached EOF. If we're in the middle of reading a multibyte character, then this is an error,
         // otherwise we just pass it down the chain
         case EOF => partialChar.map(_ => Error[Array[Byte]]("EOF encountered mid character", EOF))
-          .getOrElse(Done[Array[Byte],Iteratee[Array[Char],A]](inner, EOF))
+          .getOrElse(Done[Array[Byte],Iteratee[CharString,A]](inner, EOF))
 
         case Empty => Cont(step(inner, partialChar))
 
@@ -60,7 +60,7 @@ object Encoding {
           } else None
 
           // Extract and translate to input for the iteratee
-          val decoded = charBuffer.array().take(charBuffer.position())
+          val decoded = CharString.fromCharArray(charBuffer.array(), 0, charBuffer.position())
           val input = if (decoded.length == 0) Empty else El(decoded)
 
           // Fold the input into the iteratee, returning it this function with the new left over state
@@ -72,7 +72,7 @@ object Encoding {
       }
     }
 
-    def applyOn[A](inner: Iteratee[Array[Char], A]) = Cont(step(inner))
+    def applyOn[A](inner: Iteratee[CharString, A]) = Cont(step(inner))
   }
 
 }

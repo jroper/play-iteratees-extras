@@ -9,7 +9,7 @@ object JsonSpec extends Specification {
   "json iteratee" should {
     "parse an empty object" in test(Json.obj())
     "parse a string" in test(Json.obj("string" -> "value"))
-    "parse escaped values in a string" in test(JsString("""a\"\n\r"""))
+    "parse escaped values in a string" in test(JsString("start\"\n\r\\end"))
     "parse a number" in test(Json.obj("number" -> 10))
     "parse true" in test(Json.obj("boolean" -> true))
     "parse false" in test(Json.obj("boolean" -> false))
@@ -29,7 +29,13 @@ object JsonSpec extends Specification {
   }
 
   def test(json: JsValue) = {
-    Await.result(Enumerator(Json.stringify(json).toCharArray) |>>> JsonIteratees.jsValue, Duration.Inf) must_== json
+    Await.result(Enumerator(CharString.fromString(Json.stringify(json))) |>>> JsonIteratees.jsValue, Duration.Inf) must_== json
+    def testGrouped(n: Int) = {
+      Await.result(Enumerator.enumerate(Json.stringify(json).grouped(n).map(CharString.fromString)) |>>> JsonIteratees.jsValue, Duration.Inf) must_== json
+    }
+    testGrouped(1)
+    testGrouped(2)
+    testGrouped(7)
   }
 
 
@@ -38,12 +44,12 @@ object JsonSpec extends Specification {
     {"key1": "value1"} {"key2": "value2"}{"key3": 
     "value3"} 
 
-    """.toCharArray
-    val (en, chann) = play.api.libs.iteratee.Concurrent.broadcast[Array[Char]]
+    """
+    val (en, chann) = play.api.libs.iteratee.Concurrent.broadcast[CharString]
     import scala.concurrent.ExecutionContext.Implicits.global
 
-    val res = (en &> Enumeratee.grouped(JsonIteratees.jsSimpleObject) |>>> Iteratee.getChunks)
-    chann.push(data)
+    val res = en &> Enumeratee.grouped(JsonIteratees.jsSimpleObject) |>>> Iteratee.getChunks
+    chann.push(CharString.fromString(data))
     chann.eofAndEnd()
     Await.result(res, Duration.Inf).mkString must_== data.filterNot(_.isWhitespace).mkString
   }
@@ -56,12 +62,12 @@ object JsonSpec extends Specification {
 
     ]
 
-    """.toCharArray
-    val (en, chann) = play.api.libs.iteratee.Concurrent.broadcast[Array[Char]]
+    """
+    val (en, chann) = play.api.libs.iteratee.Concurrent.broadcast[CharString]
     import scala.concurrent.ExecutionContext.Implicits.global
 
-    val res = (en &> Enumeratee.grouped(JsonIteratees.jsSimpleArray) |>>> Iteratee.getChunks)
-    chann.push(data)
+    val res = en &> Enumeratee.grouped(JsonIteratees.jsSimpleArray) |>>> Iteratee.getChunks
+    chann.push(CharString.fromString(data))
     chann.eofAndEnd()
     Await.result(res, Duration.Inf).mkString must_== data.filterNot(_.isWhitespace).mkString
   }

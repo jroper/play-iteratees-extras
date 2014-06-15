@@ -8,7 +8,8 @@ import scala.concurrent.ExecutionContext.Implicits.global
 
 object JsonPerformanceTest extends App {
 
-  val events = Source.fromInputStream(JsonPerformanceTest.getClass.getResourceAsStream("/events.json")).mkString.toCharArray.grouped(8192).toSeq
+  val events = Source.fromInputStream(JsonPerformanceTest.getClass.getResourceAsStream("/events.json"))
+    .mkString.toCharArray.grouped(8192).toSeq.map(CharString.fromCharArray)
 
   def test = {
     Await.result(Enumerator.enumerate(events) |>>> JsonIteratees.jsSimpleArray, Duration.Inf)

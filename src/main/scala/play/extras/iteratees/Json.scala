@@ -95,7 +95,7 @@ object JsonBodyParser {
    *
    * @param handler An iteratee to handle the JSON.  By default parses them into memory as a JsValue
    */
-  def parser[A](handler: Iteratee[Array[Char], A] = jsonValue) = new BodyParser[A] {
+  def parser[A](handler: Iteratee[CharString, A] = jsonValue) = new BodyParser[A] {
     def apply(rh: RequestHeader) = {
       Encoding.decode() ><> Combinators.errorReporter &>> handler.map(result => Right(result))
     }
@@ -140,7 +140,7 @@ object JsonIteratees {
    * Parse a null or something else.  If null is found, it returns None, otherwise, it
    * returns Some(A)
    */
-  def jsNullOr[A](valueParser: Iteratee[Array[Char], A]): Iteratee[Array[Char], Option[A]] = jsonNullOr(valueParser)
+  def jsNullOr[A](valueParser: Iteratee[CharString, A]): Iteratee[CharString, Option[A]] = jsonNullOr(valueParser)
 
   /**
    * Parse a generic value
@@ -152,21 +152,21 @@ object JsonIteratees {
    *
    * For use with JsEnumeratee.jsObject and JsEnumaretee.jsArray.
    */
-  def jsValues[A, I](valueParser: Iteratee[Array[Char], A]) = (index: I) => valueParser
+  def jsValues[A, I](valueParser: Iteratee[CharString, A]) = (index: I) => valueParser
 
   /**
    * Use to parse all the values of a map into key value pairs, using the given parser to parse the value.
    *
    * For use with JsEnumeratee.jsObject.
    */
-  def jsKeyValues[A](valueParser: Iteratee[Array[Char], A]) = (key: String) => valueParser.map((value) => (key, value))
+  def jsKeyValues[A](valueParser: Iteratee[CharString, A]) = (key: String) => valueParser.map((value) => (key, value))
 
   /**
    * Use to parse all the values of an array into indexed pairs, using the given parser to parse the value.
    *
    * For use with JsEnumeratee.jsArray.
    */
-  def jsIndexedValues[A](valueParser: Iteratee[Array[Char], A]) = (index: Int) => valueParser.map((value) => (index, value))
+  def jsIndexedValues[A](valueParser: Iteratee[CharString, A]) = (index: Int) => valueParser.map((value) => (index, value))
 }
 
 object JsonEnumeratees {
@@ -176,7 +176,7 @@ object JsonEnumeratees {
   /**
    * Enumeratee for a JSON object.  Adapts a stream of character arrays into a stream of key to JsValue pairs.
    */
-  def jsObject: Enumeratee[Array[Char], (String, JsValue)] =
+  def jsObject: Enumeratee[CharString, (String, JsValue)] =
     jsObject(JsonIteratees.jsKeyValues(jsonValue))
 
   /**
@@ -186,7 +186,7 @@ object JsonEnumeratees {
    * @param valueParsers  A mapping of keys to iteratees to parse their values.  If a parser is not found for a given
    *                      key, an error will be raised.
    */
-  def jsObject[V](valueParsers: (String, Iteratee[Array[Char], V])*): Enumeratee[Array[Char], V] = {
+  def jsObject[V](valueParsers: (String, Iteratee[CharString, V])*): Enumeratee[CharString, V] = {
     jsObject((key: String) => Map(valueParsers:_*).get(key).getOrElse(Error("Unexpected key found in JSON: " + key, Empty)))
   }
 
@@ -197,13 +197,13 @@ object JsonEnumeratees {
    *
    * @param valueParser   A function that returns an iteratee to parse the value for a given key.
    */
-  def jsObject[V](valueParser: String => Iteratee[Array[Char], V])(implicit ec: ExecutionContext) = new Enumeratee[Array[Char], V] {
+  def jsObject[V](valueParser: String => Iteratee[CharString, V])(implicit ec: ExecutionContext) = new Enumeratee[CharString, V] {
     def step[A](inner: Iteratee[V, A])(in: Input[V]): Iteratee[V, Iteratee[V, A]] = in match {
       case EOF => Done(inner, in)
       case _ => Cont(step(Iteratee.flatten(inner.feed(in))))
     }
 
-    def applyOn[A](inner: Iteratee[V, A]): Iteratee[Array[Char], Iteratee[V, A]] = {
+    def applyOn[A](inner: Iteratee[V, A]): Iteratee[CharString, Iteratee[V, A]] = {
       jsonObject(Cont(step(inner)), valueParser)(ec)
     }
   }
@@ -211,7 +211,7 @@ object JsonEnumeratees {
   /**
    * Enumeratee for a JSON array.  Adapts a stream of character arrays into a stream of JsValues.
    */
-  def jsArray: Enumeratee[Array[Char], JsValue] = jsArray((index: Int) => jsonValue)
+  def jsArray: Enumeratee[CharString, JsValue] = jsArray((index: Int) => jsonValue)
 
   /**
    * Enumeratee for a JSON array.  Adapts a stream of character arrays into a stream of parsed values
@@ -220,7 +220,7 @@ object JsonEnumeratees {
    * @param valueParsers  A sequence of iteratees to parse values.  If more elements are found then the
    *                      sequence contains, an error is thrown.
    */
-  def jsArray[V](valueParsers: (Int, Iteratee[Array[Char], V])*): Enumeratee[Array[Char], V] = {
+  def jsArray[V](valueParsers: (Int, Iteratee[CharString, V])*): Enumeratee[CharString, V] = {
     val parserAt = valueParsers.lift
     jsArray((index: Int) => parserAt(index).map(_._2).getOrElse(Error("No handler provided for element " + index + " of the array", Empty)))
   }
@@ -232,7 +232,7 @@ object JsonEnumeratees {
    *
    * @param valueParser   A function that returns an iteratee to parse the value for a array index.
    */
-  def jsArray[V](valueParser: Int => Iteratee[Array[Char], V])(implicit ec: ExecutionContext) = new Enumeratee[Array[Char], V] {
+  def jsArray[V](valueParser: Int => Iteratee[CharString, V])(implicit ec: ExecutionContext) = new Enumeratee[CharString, V] {
     def step[A](inner: Iteratee[V, A])(in: Input[V]): Iteratee[V, Iteratee[V, A]] = in match {
       case EOF => Done(inner, in)
       case _ => {
@@ -240,7 +240,7 @@ object JsonEnumeratees {
       }
     }
 
-    def applyOn[A](inner: Iteratee[V, A]): Iteratee[Array[Char], Iteratee[V, A]] = {
+    def applyOn[A](inner: Iteratee[V, A]): Iteratee[CharString, Iteratee[V, A]] = {
       jsonArray(Cont(step(inner)), valueParser)(ec)
     }
   }
@@ -265,10 +265,10 @@ object JsonParser {
   // JSON parsing
   //
 
-  private def jsonKeyValue[A](valueHandler: String => Iteratee[Array[Char], A])(implicit ec: ExecutionContext) =
+  private def jsonKeyValue[A](valueHandler: String => Iteratee[CharString, A])(implicit ec: ExecutionContext) =
     jsonKeyValueImpl(withExecutor(valueHandler)(ec))
 
-  private def jsonKeyValueImpl[A](valueHandler: String => Iteratee[Array[Char], A]) = for {
+  private def jsonKeyValueImpl[A](valueHandler: String => Iteratee[CharString, A]) = for {
     key <- jsonString
     _ <- skipWhitespace
     _ <- expect(':')
@@ -279,11 +279,11 @@ object JsonParser {
   }
 
   def jsonKeyValues[A, V](keyValuesHandler: Iteratee[V, A],
-                           valueHandler: String => Iteratee[Array[Char], V]
+                           valueHandler: String => Iteratee[CharString, V]
                             )(implicit ec: ExecutionContext) = jsonKeyValuesImpl(keyValuesHandler, withExecutor(valueHandler)(ec))
 
   private def jsonKeyValuesImpl[A, V](keyValuesHandler: Iteratee[V, A],
-                                      valueHandler: String => Iteratee[Array[Char], V]): Iteratee[Array[Char], A] = for {
+                                      valueHandler: String => Iteratee[CharString, V]): Iteratee[CharString, A] = for {
     _ <- skipWhitespace
     fed <- jsonKeyValueImpl(valueHandler).map(keyValue => Iteratee.flatten(keyValuesHandler.feed(El(keyValue))))
     _ <- skipWhitespace
@@ -295,15 +295,15 @@ object JsonParser {
   } yield keyValues
 
 
-  def jsonObject: Iteratee[Array[Char], JsObject] = jsonObject()
+  def jsonObject: Iteratee[CharString, JsObject] = jsonObject()
 
   def jsonObject[A, V](keyValuesHandler: Iteratee[V, A] = jsonObjectCreator,
-                       valueHandler: String => Iteratee[Array[Char], V] = (key: String) => jsonValue.map(value => (key, value))(trampoline)
-                        )(implicit ec: ExecutionContext): Iteratee[Array[Char], A] =
+                       valueHandler: String => Iteratee[CharString, V] = (key: String) => jsonValue.map(value => (key, value))(trampoline)
+                        )(implicit ec: ExecutionContext): Iteratee[CharString, A] =
     jsonObjectImpl(keyValuesHandler, withExecutor(valueHandler)(ec))
 
   private def jsonObjectImpl[A, V](keyValuesHandler: Iteratee[V, A] = jsonObjectCreator,
-                       valueHandler: String => Iteratee[Array[Char], V] = (key: String) => jsonValue.map(value => (key, value))
+                       valueHandler: String => Iteratee[CharString, V] = (key: String) => jsonValue.map(value => (key, value))
                         ) = for {
     _ <- skipWhitespace
     _ <- expect('{')
@@ -316,16 +316,16 @@ object JsonParser {
     _ <- skipWhitespace   // skip all whitespaces after a object has been parsed since the next object might be separated by some whitespace/newline
   } yield keyValues
 
-  def jsonValueForEach: Int => Iteratee[Array[Char], JsValue] = index => jsonValue
+  def jsonValueForEach: Int => Iteratee[CharString, JsValue] = index => jsonValue
 
   def jsonArrayValues[A, V](valuesHandler: Iteratee[V, A],
-                            valueHandler: Int => Iteratee[Array[Char], V],
-                            index: Int = 0)(implicit ec: ExecutionContext): Iteratee[Array[Char], A] =
+                            valueHandler: Int => Iteratee[CharString, V],
+                            index: Int = 0)(implicit ec: ExecutionContext): Iteratee[CharString, A] =
     jsonArrayValuesImpl(valuesHandler, withExecutor(valueHandler)(ec), index)
 
   private def jsonArrayValuesImpl[A, V](valuesHandler: Iteratee[V, A],
-                            valueHandler: Int => Iteratee[Array[Char], V],
-                            index: Int = 0): Iteratee[Array[Char], A] = for {
+                            valueHandler: Int => Iteratee[CharString, V],
+                            index: Int = 0): Iteratee[CharString, A] = for {
     _ <- skipWhitespace
     fed <- valueHandler(index).map(value => Iteratee.flatten(valuesHandler.feed(El(value))))
     _ <- skipWhitespace
@@ -338,15 +338,15 @@ object JsonParser {
   } yield values
 
 
-  def jsonArray: Iteratee[Array[Char], JsArray] = jsonArray()
+  def jsonArray: Iteratee[CharString, JsArray] = jsonArray()
 
   def jsonArray[A, V](valuesHandler: Iteratee[V, A] = jsonArrayCreator,
-                      valueHandler: Int => Iteratee[Array[Char], V] = jsonValueForEach
-                       )(implicit ec: ExecutionContext): Iteratee[Array[Char], A] =
+                      valueHandler: Int => Iteratee[CharString, V] = jsonValueForEach
+                       )(implicit ec: ExecutionContext): Iteratee[CharString, A] =
     jsonArrayImpl(valuesHandler, withExecutor(valueHandler)(ec))
 
   private def jsonArrayImpl[A, V](valuesHandler: Iteratee[V, A] = jsonArrayCreator,
-                      valueHandler: Int => Iteratee[Array[Char], V] = jsonValueForEach) = for {
+                      valueHandler: Int => Iteratee[CharString, V] = jsonValueForEach) = for {
     _ <- skipWhitespace
     _ <- expect('[')
     _ <- skipWhitespace
@@ -361,7 +361,7 @@ object JsonParser {
     _ <- skipWhitespace
   } yield values
 
-  def jsonValue: Iteratee[Array[Char], JsValue] = peekOne.flatMap {
+  def jsonValue: Iteratee[CharString, JsValue] = peekOne.flatMap {
     case Some('"') => jsonString
     case Some('{') => jsonObject
     case Some('[') => jsonArray
@@ -392,7 +392,7 @@ object JsonParser {
     _ <- dropWhile(ch => ch >= 'a' && ch <= 'z')
   } yield jsBoolean
 
-  def jsonNullOr[A](other: Iteratee[Array[Char], A]) = for {
+  def jsonNullOr[A](other: Iteratee[CharString, A]) = for {
     nullStr <- peekWhile(ch => ch >= 'a' && ch <= 'z')
     value <- nullStr match {
       case n if n == "null" => dropWhile(ch => ch >= 'a' && ch <= 'z').map(_ => None)
@@ -409,58 +409,60 @@ object JsonParser {
     _ <- dropWhile(ch => ch >= 'a' && ch <= 'z')
   } yield jsNull
 
-  def jsonString: Iteratee[Array[Char], JsString] = {
+  def jsonString: Iteratee[CharString, JsString] = {
 
-    // Represents the state of the fold.  We have the result StringBuilder, possibly a remaining StringBuilder
-    // if we've encountered an error, an escaped StringBuilder if we are currently reading an escape sequence,
-    // and possibly an error message.  Because this is a mutable structure with the StringBuilders, we, for
-    // the normal case of growing the result or remaining buffers, do not need to create a new state, but can
-    // just append to the buffers.
-    case class State(result: StringBuilder,
-                     remaining: Option[StringBuilder],
-                     escaped: Option[StringBuilder],
-                     error: Option[String])
-
-    def stringContents(sb: StringBuilder = new StringBuilder, escaped: Option[StringBuilder] = None): Iteratee[Array[Char], String] = Cont {
+    def stringContents(contents: CharString = CharString.empty, escaped: Option[StringBuilder] = None): Iteratee[CharString, String] = Cont {
       case in @ EOF => Error("Unexpected end of input in the middle of a String", in)
-      case Empty => stringContents(sb, escaped)
+      case Empty => stringContents(contents, escaped)
       case El(data) => {
 
-        // Fold it
-        val state = data.foldLeft(new State(sb, None, escaped, None)) {
-          // We've finished, and are collecting remaining characters
-          case (state @ State(_, Some(remaining), _, _), ch) => {
-            remaining.append(ch)
-            state
-          }
-          // We're in the middle of an escape sequence
-          case (state @ State(result, _, Some(esc), _), ch) => {
-            unescape(esc.append(ch)).fold(
-              err => new State(result, Some(new StringBuilder().append("\\").append(esc)), None, Some(err)),
-              _.map(c => new State(result.append(c), None, None, None)).getOrElse(state)
-            )
-          }
-          // Control character, that's an error
-          case (State(result, _, _, _), control) if control >= 0 && control < 32 => {
-            new State(result, Some(new StringBuilder), None,
-              Some("Illegal control character found in JSON String: 0x" + Integer.toString(control, 16)))
-          }
-          // We've encountered the start of an escape sequence
-          case (State(result, _, _, _), '\\') => new State(result, None, Some(new StringBuilder), None)
+        var i = 0
+        var start = 0
+        var done = false
+        var esc = escaped
+        var current = contents
+        var error: Option[String] = None
 
-          // We've encountered the end of the String, and should start collecting remaining characters
-          case (State(result, _, _, _), '"') => new State(result, Some(new StringBuilder), None, None)
-          // An ordinary character to append to the result
-          case (state @ State(result, _, _, _), ch) => {
-            result.append(ch)
-            state
+        while (i < data.length && !done) {
+          val c = data.charAt(i)
+
+          // We're in the middle of an escape sequence
+          if (esc.isDefined) {
+            unescape(esc.get.append(c)) match {
+              case Left(err) =>
+                error = Some(err)
+                done = true
+              case Right(Some(unesc)) =>
+                current ++= CharString.fromChar(unesc)
+                start = i + 1
+                esc = None
+              case Right(None) =>
+            }
+          } else if (c >= 0 && c < 32) {
+            error = Some("Illegal control character found in JSON String: 0x" + Integer.toString(c, 16))
+            done = true
+          } else if (c == '\\') {
+            // Start escape sequence
+            current ++= data.substring(start, i - start)
+            esc = Some(new StringBuilder)
+          } else if (c == '"') {
+            // End of string
+            current ++= data.substring(start, i - start)
+            done = true
           }
+          i += 1
         }
-        // Convert the state to an Iteratee
-        state match {
-          case State(_, Some(remaining), _, Some(err)) => Error(err, El(remaining.toArray))
-          case State(result, Some(remaining), _, _) => Done(result.toString(), El(remaining.toArray))
-          case State(result, _, esc, _) => stringContents(result, esc)
+
+        if (error.isDefined) {
+          Error(error.get, El(data.substring(start, data.length - start)))
+        } else if (done) {
+          Done(current.mkString, El(data.substring(i, data.length - i)))
+        } else {
+          if (esc.isDefined) {
+            stringContents(current, esc)
+          } else {
+            stringContents(current ++ data.substring(start, i - start), esc)
+          }
         }
       }
     }

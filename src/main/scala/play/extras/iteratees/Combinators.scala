@@ -18,12 +18,12 @@ object Combinators {
    * Error iteratee.  Differs from Iteratees Error iteratee in that initially this one is in the cont state, so that
    * it can get the remaining input to pass back in the error.  This makes it more useful for composition.
    */
-  def error[A](msg: String) = Cont[Array[Char], A](input => Error(msg, input))
+  def error[A](msg: String) = Cont[CharString, A](input => Error(msg, input))
 
   /**
-   * Done iteratee, typed with Array[Char] to avoid needing to type it ourselves
+   * Done iteratee, typed with CharString to avoid needing to type it ourselves
    */
-  def done[A](a: A) = Done[Array[Char], A](a)
+  def done[A](a: A) = Done[CharString, A](a)
 
   def FailOnEof[E, A](f: E => Iteratee[E, A]): Iteratee[E, A] = Cont {
     case in @ EOF => Error("Premature end of input", in)
@@ -44,7 +44,7 @@ object Combinators {
   } yield result
 
 
-  def drop(n: Int): Iteratee[Array[Char], Unit] = Cont {
+  def drop(n: Int): Iteratee[CharString, Unit] = Cont {
     case in @ EOF => Done(Unit, in)
     case Empty => drop(n)
     case El(data) => {
@@ -69,7 +69,7 @@ object Combinators {
     _ <- drop(1)
   } yield result
 
-  def dropWhile(p: Char => Boolean): Iteratee[Array[Char], Unit] = Cont {
+  def dropWhile(p: Char => Boolean): Iteratee[CharString, Unit] = Cont {
     case in @ EOF => Done(Unit, in)
     case Empty => dropWhile(p)
     case El(data) => {
@@ -82,24 +82,24 @@ object Combinators {
     }
   }
 
-  def peekWhile(p: Char => Boolean, peeked: Array[Char] = Array[Char]()): Iteratee[Array[Char], String] = Cont {
-    case in @ EOF => Done(new String(peeked), El(peeked))
+  def peekWhile(p: Char => Boolean, peeked: CharString = CharString.empty): Iteratee[CharString, String] = Cont {
+    case in @ EOF => Done(peeked.mkString, El(peeked))
     case Empty => peekWhile(p, peeked)
     case El(data) => {
       val taken = data.takeWhile(p)
       if (taken.length == data.length) {
         peekWhile(p, peeked ++ taken)
       } else {
-        Done(new String(peeked ++ taken), El(peeked ++ data))
+        Done((peeked ++ taken).mkString, El(peeked ++ data))
       }
     }
   }
 
-  def takeOne(expected: => String): Iteratee[Array[Char], Char] = FailOnEof { data =>
+  def takeOne(expected: => String): Iteratee[CharString, Char] = FailOnEof { data =>
     data.headOption.map(c => Done(c, El(data.drop(1)))).getOrElse(takeOne(expected))
   }
 
-  val peekOne: Iteratee[Array[Char], Option[Char]] = Cont {
+  val peekOne: Iteratee[CharString, Option[Char]] = Cont {
     case in @ EOF => Done(None, in)
     case Empty => peekOne
     case in @ El(data) => {
@@ -114,7 +114,7 @@ object Combinators {
    *
    * Useful when using combinators to give meaningful error messages when things fail to parse correctly.
    */
-  def errorReporter: Enumeratee[Array[Char], Array[Char]] = new Enumeratee[Array[Char], Array[Char]] {
+  def errorReporter: Enumeratee[CharString, CharString] = new Enumeratee[CharString, CharString] {
 
     /**
      * The current state of the error reporter
@@ -127,9 +127,9 @@ object Combinators {
     case class State(chunks: Int = 0,
                      chars: Int = 0,
                      lines: Int = 1,
-                     data: Array[Char] = Array[Char]())
+                     data: CharString = CharString.empty)
 
-    def step[A](inner: Iteratee[Array[Char], A], state: State = State())(in: Input[Array[Char]]): Iteratee[Array[Char], Iteratee[Array[Char], A]] = {
+    def step[A](inner: Iteratee[CharString, A], state: State = State())(in: Input[CharString]): Iteratee[CharString, Iteratee[CharString, A]] = {
       in match {
         case El(data) => {
           // Increment chunks, chars and lines and capture data
@@ -157,8 +157,8 @@ object Combinators {
     /**
      * An iteratee that wraps another iteratee, handling the errors from that iteratee
      */
-    def mapErrors[A](state: State, toMap: Iteratee[Array[Char], A]): Iteratee[Array[Char], A] = new Iteratee[Array[Char], A] {
-      def fold[B](folder: (Step[Array[Char], A]) => Future[B])(implicit ec: ExecutionContext) = {
+    def mapErrors[A](state: State, toMap: Iteratee[CharString, A]): Iteratee[CharString, A] = new Iteratee[CharString, A] {
+      def fold[B](folder: (Step[CharString, A]) => Future[B])(implicit ec: ExecutionContext) = {
         toMap.fold {
           // Handle the error before passing it to the folder
           case Step.Error(msg, remaining) => folder(handleError(state, msg, remaining))
@@ -170,11 +170,11 @@ object Combinators {
       }
     }
 
-    def handleError(state: State, msg: String, remainingInput: Input[Array[Char]]): Step.Error[Array[Char]] = {
+    def handleError(state: State, msg: String, remainingInput: Input[CharString]): Step.Error[CharString] = {
       // Get the remaining input
       val remaining = remainingInput match {
         case El(data) => data
-        case _ => Array[Char]()
+        case _ => CharString.empty
       }
       // Maybe remaining is greater than the size of our state?  Shouldn't be, bad Iteratee.  If it is, use remaining
       // instead
@@ -194,7 +194,7 @@ object Combinators {
           |Error encountered on line %d column %d: %s
           |%s
           |%s^
-        """.stripMargin.format(lineNo, col, msg, new String(line), new String(line.take(col - 1).map(ch => if (ch == '\t') '\t' else ' ')))
+        """.stripMargin.format(lineNo, col, msg, line.mkString, line.take(col - 1).map(ch => if (ch == '\t') '\t' else ' ').mkString)
       } else {
         // We don't have the entire line in our context data, don't report the column number as this will confuse
         val line = contextData.takeWhile(_ != '\n')
@@ -202,12 +202,12 @@ object Combinators {
           |Error encountered on line %d: %s
           |%s
           |%s^
-        """.stripMargin.format(lineNo, msg, new String(line),
-          new String(line.take(errorPos - 1).map(ch => if (ch == '\t') '\t' else ' ')))
+        """.stripMargin.format(lineNo, msg, line.mkString,
+          line.take(errorPos - 1).map(ch => if (ch == '\t') '\t' else ' ').mkString)
       }
       Step.Error(newMsg, El(remaining))
     }
 
-    def applyOn[A](inner: Iteratee[Array[Char], A]) = Cont(step(inner))
+    def applyOn[A](inner: Iteratee[CharString, A]) = Cont(step(inner))
   }
 }
