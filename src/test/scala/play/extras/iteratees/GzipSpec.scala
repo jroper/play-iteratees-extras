@@ -41,7 +41,7 @@ object GzipSpec extends Specification {
         scala.util.Random.nextString(10000))
     }
 
-    def test(values: String*) {
+    def test(values: String*) = {
       import java.io._
       import java.util.zip._
 
@@ -98,7 +98,7 @@ object GzipSpec extends Specification {
       test(scala.util.Random.nextString(10000), gzip = Gzip.gzip(10))
     }
 
-    def test(value: String, gunzip: Enumeratee[Array[Byte], Array[Byte]] = Gzip.gunzip(), gzip: Enumeratee[Array[Byte], Array[Byte]] = Gzip.gzip()) {
+    def test(value: String, gunzip: Enumeratee[Array[Byte], Array[Byte]] = Gzip.gunzip(), gzip: Enumeratee[Array[Byte], Array[Byte]] = Gzip.gzip()) = {
       val future = Enumerator(value.getBytes("utf-8")) &> gzip &> gunzip |>>> Iteratee.consume[Array[Byte]]()
       val result = new String(Await.result(future, Duration.Inf), "utf-8")
       result must_== value

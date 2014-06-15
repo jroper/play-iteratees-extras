@@ -3,7 +3,8 @@ package play.extras.iteratees
 import org.specs2.mutable._
 
 import play.api.libs.iteratee.{Enumerator, Iteratee}
-import play.api.libs.concurrent.PlayPromise
+import scala.concurrent.Await
+import scala.concurrent.duration._
 
 /**
  * Add your spec here.
@@ -38,7 +39,7 @@ object EncodingSpec extends Specification {
   }
 
   def convertBytes(byteArrays: Array[Byte]*) = new String(
-      new PlayPromise(Enumerator(byteArrays:_*) &> Encoding.decode() |>>> Iteratee.consume[Array[Char]]()).await.get
+      Await.result(Enumerator(byteArrays:_*) &> Encoding.decode() |>>> Iteratee.consume[Array[Char]](), Duration.Inf)
     )
 
   def split(bytes: Array[Byte], pos: Int*): List[Array[Byte]] = {
