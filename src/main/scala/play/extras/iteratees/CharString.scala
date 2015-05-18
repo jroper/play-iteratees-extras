@@ -201,6 +201,11 @@ private object EmptyCharString extends CharString {
   def lastIndexWhere(p: Char => Boolean, end: Int) = 0
 }
 
+/**
+ * This is only optimised for ++ and mkString, all other operations are slow.
+ *
+ * @param charStrings The list of joined strings, in reverse.
+ */
 private class JoinedCharString(val charStrings: List[ArrayCharString]) extends CharString {
   def substring(offset: Int, length: Int) = {
     charStrings.foldRight((offset, length, CharString.empty)) {

@@ -7,7 +7,6 @@ Since it is unofficial, don't expect any support, bug fixes or updates in any so
 
 Currently the library contains the following tools:
 
-* Gzip enumeratees for both zipping and unzipping
 * Character encoding enumeratee for decoding streams of byte arrays
 * Some useful combinator style iteratees for parsing streams of character arrays
 * An error reporting enumeratee for including context to error messages when using combinators
