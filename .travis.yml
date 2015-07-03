@@ -1,0 +1,14 @@
+language: scala
+sudo: false
+jdk:
+  - oraclejdk8
+script:
+  - sbt +test
+cache:
+  directories:
+    - $HOME/.ivy2/cache
+before_cache:
+  # Ensure changes to the cache aren't persisted
+  - rm -rf $HOME/.ivy2/cache/com.typesafe.play.extras/iteratee-extras*
+  # Delete all ivydata files since ivy touches them on each build
+  - find $HOME/.ivy2/cache -name "ivydata-*.properties" | xargs rm
