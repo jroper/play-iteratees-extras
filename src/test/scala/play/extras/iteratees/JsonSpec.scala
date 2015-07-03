@@ -1,7 +1,8 @@
 import org.specs2.mutable.Specification
 import play.api.libs.iteratee._
-import concurrent.Await
-import concurrent.duration.Duration
+import scala.concurrent.Await
+import scala.concurrent.duration.Duration
+import scala.concurrent.ExecutionContext.Implicits.global
 import play.api.libs.json._
 import play.extras.iteratees._
 

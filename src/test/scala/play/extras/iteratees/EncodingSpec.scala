@@ -5,6 +5,7 @@ import org.specs2.mutable._
 import play.api.libs.iteratee.{Enumeratee, Enumerator, Iteratee}
 import scala.concurrent.Await
 import scala.concurrent.duration._
+import scala.concurrent.ExecutionContext.Implicits.global
 
 /**
  * Add your spec here.
