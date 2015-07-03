@@ -11,3 +11,9 @@ Currently the library contains the following tools:
 * Some useful combinator style iteratees for parsing streams of character arrays
 * An error reporting enumeratee for including context to error messages when using combinators
 * A full JSON parser, allowing streaming parsing of JSON without writing all the JSON into memory (using a JSON enumeratee parser)
+
+To use with Play 2.4, simply add the following library dependency to your build:
+
+```scala
+libraryDependencies += "com.typesafe.play.extras" %% "iteratees-extras" % "1.5.0"
+```
