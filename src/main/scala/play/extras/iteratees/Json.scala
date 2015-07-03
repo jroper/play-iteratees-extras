@@ -254,7 +254,7 @@ object JsonParser {
   /**
    * Creates a JSON object from a key value iteratee
    */
-  def jsonObjectCreator: Iteratee[(String, JsValue), JsObject] = Iteratee.getChunks.map(keyValues => new JsObject(keyValues))
+  def jsonObjectCreator: Iteratee[(String, JsValue), JsObject] = Iteratee.getChunks.map(keyValues => new JsObject(keyValues.toMap))
 
   /**
    * Creates a JSON array from a key value iteratee

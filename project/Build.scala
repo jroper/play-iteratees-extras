@@ -3,7 +3,7 @@ import Keys._
 
 object ApplicationBuild extends Build {
 
-  val playVersion = "2.3.0"
+  val playVersion = "2.4.1"
 
   val main = Project("iteratees-extras", new File(".")).settings(
     libraryDependencies ++= Seq(
@@ -16,9 +16,9 @@ object ApplicationBuild extends Build {
       else                                   Some("releases"  at nexus + "maven-releases/")
     },
     organization := "com.typesafe.play.extras",
-    version := "1.4.0-SNAPSHOT",
-    scalaVersion := "2.11.1",
-    crossScalaVersions := Seq("2.11.1", "2.10.4")
+    version := "1.5.0-SNAPSHOT",
+    scalaVersion := "2.11.6",
+    crossScalaVersions := Seq("2.11.6", "2.10.4")
   )
 
 }
