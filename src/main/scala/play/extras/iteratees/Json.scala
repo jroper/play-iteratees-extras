@@ -3,7 +3,9 @@ package play.extras.iteratees
 import play.api.libs.iteratee._
 import play.api.libs.iteratee.Input._
 import play.api.libs.iteratee.Execution.Implicits.trampoline
+import play.api.libs.streams.Streams
 import play.api.libs.json._
+import akka.util.ByteString
 import play.api.mvc.{RequestHeader, BodyParser}
 import scala.concurrent.{Future, ExecutionContext}
 
@@ -97,7 +99,9 @@ object JsonBodyParser {
    */
   def parser[A](handler: Iteratee[CharString, A] = jsonValue) = new BodyParser[A] {
     def apply(rh: RequestHeader) = {
-      Encoding.decode() ><> Combinators.errorReporter &>> handler.map(result => Right(result))
+	  val toCharString: Enumeratee[ByteString, CharString] = Enumeratee.map[ByteString]{ bs => CharString.fromString(bs.decodeString("UTF-8")) }
+	  val iteratee = toCharString ><> Combinators.errorReporter &>> handler.map(result => Right(result))
+	  Streams.iterateeToAccumulator(iteratee)
     }
   }
 }

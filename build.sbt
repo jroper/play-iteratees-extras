@@ -1,13 +1,13 @@
 name := "iteratees-extras"
 organization := "com.typesafe.play.extras"
 
-scalaVersion := "2.11.6"
-crossScalaVersions := Seq("2.11.6", "2.10.4")
+scalaVersion := "2.11.8"
+crossScalaVersions := Seq("2.11.8", "2.10.4")
 javacOptions ++= Seq("-source", "1.8", "-target", "1.8", "-Xlint:unchecked", "-encoding", "UTF-8")
 scalacOptions += "-deprecation"
 
 libraryDependencies ++= Seq(
-  "com.typesafe.play"         %% "play"               % "2.4.1"     % "provided",
+  "com.typesafe.play"         %% "play"               % "2.5.3"     % "provided",
   "org.specs2"                %% "specs2-core"        % "3.3.1"     % "test"
 )
 
